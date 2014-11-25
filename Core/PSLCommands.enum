@@ -1,0 +1,76 @@
+13'h
+Read_cl_s
+0x0A50
+Read a cache line and allocate the cache line in the precise cache in shared state. This command should be used when there is an expectation of temporal locality. AXh_csize should be 128 byte and aXh_cea should be 128 byte line aligned.
+Read_cl_m
+0x0A60
+Read a cache line and allocate the cache line in the precise cache in modified state. This command should be used when there is an expectation that data within the line will be written in the near future. AXh_csize should be 128 byte and aXh_cea should be 128 byte line aligned.
+Read_cl_lck
+0x0A6B
+Read a cache line and allocate the cache line in the precise cache in locked and modified state. This com- mand should be used as part of a atomic read-modify-write sequence. AXh_csize should be 128 byte and aXh_cea should be 128 byte line aligned.
+Read_cl_res
+0x0A67
+Read a cache line and allocate the cache line in the precise cache and acquire a reservation. AXh_Csize should be 128 byte and aXh_cea should be 128 byte line aligned.
+touch_i
+0x0240
+Bring a cache line into the precise cache in the ihpc state without reading data in preparation for a cache line write. AXh_csize should be 128 byte and aXh_cea should be 128 byte line aligned. IHPC is where the owner of the line is the highest point of coherency but it is holding the line in an I state.
+touch_s
+0x0250
+Bring a cache line into the precise cache in shared state. AXh_csize should be 128 byte and aXh_cea should be 128 byte line aligned.
+touch_m
+0x0260
+Bring a cache line into the precise cache in modified state. AXh_csize should be 128 byte and aXh_cea should be 128 byte line aligned.
+Write_mi
+0x0D60
+Write all or part of a cache line and allocate the cache line in the precise cache in modified state. The line will go invalid if a snoop read hits it. This command should be used when there is an expectation of tempo- ral locality, followed by a use by another processor. AXh_csize should be a power of 2 and aXh_cea should be naturally aligned according to size.
+Write_ms
+0x0D70
+Write all or part of a cache line and allocate the cache line in the precise cache in modified state. The line will go to shared state if a snoop read hits it. This command should be used when there is an expectation of temporal locality in a producer-consumer model. AXh_csize should be a power of 2 and aXh_cea should be naturally aligned according to size.
+Write_unlock
+0x0D6B
+If a lock is present, write all or part of a cache line and clear the lines lock status back to modified state. Will fail if lock is not present. AXh_csize should be a power of 2 and aXh_cea should be naturally aligned according to size
+Write_c
+0x0D67
+If a reservation is present, write all or part of a cache line and clear the reservation status. If a reservation is not present, fail. AXh_csize should be a power of 2 and aXh_cea should be naturally aligned according to size.
+push_i
+0x0140
+Attempt to accelerate the subsequent writing of a line, previously writen by the accelerator or by another processor. AXh_csize should be 128 byte and aXh_cea should be 128 byte line aligned.
+push_s
+0x0150
+Attempt to accelerate the subsequent reading of a line, previously writen by the accelerator or by another processor. AXh_csize should be 128 byte and aXh_cea should be 128 byte line aligned.
+evict_i
+0x1140
+Force a line out of the precise cache. Modified lines will be castout to system memory. AXh_csize should be 128 byte and aXh_cea should be 128 byte line aligned.
+zero_m
+0x1260
+Zero a cache line and allocate it into the precise cache in modified state. AXh_csize should be 128 byte and aXh_cea should be 128 byte line aligned.
+lock
+0x016b
+Request that a cache line be present in the precise cache in locked and modified state. This command should be used as part of a atomic read-modify-write sequence. AXh_csize should be 128 byte and aXh_- cea should be 128 byte line aligned.
+unlock
+0x017b
+Clear the lock state associated with a line. AXh_csize should be 128 byte and aXh_cea should be 128 byte line aligned.
+Read_cl_na
+0x0A00
+Read a cache line but do not allocate the cache line into a cache. This command should be used during streaming operations when there is no expectation the data will be re-used before it would have been cast out of the cache. AXh_csize should be 128 byte and aXh_cea should be 128 byte line aligned.
+Read_pna
+0x0E00
+Read all or part of an line without allocation. This command should be used for MMIO. AXh_csize should be a power of 2 and aXh_cea should be naturally aligned according to size.
+Write_na
+0x0D00
+Write all or part of a cache line but do not allocate the cache line into a cache. This command should be used during streaming operations when there is no expectation the data will be re-used before it would have been cast out of the cache. AXh_csize should be a power of 2 and aXh_cea should be naturally aligned according to size.
+Write_inj
+0x0D10
+Write all or part of a cache line. Do not allocate the cache line into a cache, attempt to inject the data into an HPC (Highest Point of Coherency). AXh_csize should be a power of 2 and aXh_cea should be naturally aligned according to size
+flush
+0x0100
+Flush data from all caches.
+intreq
+0x0000
+Request Interrupt service. See Section 4.1.4 Request for Interrupt Service on page 69.
+restart
+0x0001
+Stop flushing commands after error
+INVALID
+0x1fff
+Invalid tag, assigned by default if BSV unpacking fails

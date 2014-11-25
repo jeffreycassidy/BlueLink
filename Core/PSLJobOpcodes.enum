@@ -1,0 +1,13 @@
+8'h
+Start
+0x90
+Job Execution in all modes. Begin running a new context, haX_jea contains the Work Element Descriptor in Dedicated Process Mode and Shared mode.
+Reset
+0x80
+Job Execution in all modes. Force into a clean state, erasing all state from previous context. This command will be sent prior to a Start or Load command.
+Timebase
+0x42
+Send requested 64-bit timebase value to the accelerator on the haX_jea bus.
+Invalid
+0xff
+Invalid value

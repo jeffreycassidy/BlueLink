@@ -1,17 +1,40 @@
-Except as noted below this work is copyright (c) Jeffrey Cassidy, 2014, and
-released under the Apache License Version 2.0.
+The files in this folder are derivatives of software obtained from International
+Business Machines under the Apache 2.0 licence.
+
+Original version copyright (c) International Business Machines, 2014
+
+The original source file can be found at:
+github.com/kirkmorrow/pslse/afu_driver/verilog/top.v
+Commit e6c1342 Nov 7 2014
 
 
-This package contains the following files which were derived from content
-provided by from IBM under the Apache License Version 2.0:
+--------------------------------------------------------------------------------
+Modifications to the original
+--------------------------------------------------------------------------------
 
-    * The contents of PSLVerilog/ are derived from IBM's PSLSE package
-    Originals may be found at github.com/kirkmorrow/pslse
+Modifications are copyright (c) 2014 Jeffrey Cassidy and licensed under the
+Apache License 2.0.
 
-    * The .enum files in Core/ are copied from table in IBM's CAPI User Guide
+The files have been modified as follows:
+
+1) Conversion from a top-level module top.v into a submodule psl_sim.v so that
+   the PSL may be instantiated within a larger design
+
+2) Wrapping of related signals into bit vectors to facilitate import into 
+   Bluespec SystemVerilog (psl_sim_wrapper.v)
 
 
 
+
+
+-------------------------------------------------------------------------------
+  Apache License 2.0
+-------------------------------------------------------------------------------
+
+The Program includes some or all of the following that IBM obtained under the
+Apache License Version 2.0:
+
+[NONE]
 
 -------------------------------------------------------------------------------
 
@@ -190,4 +213,3 @@ Apache License
       incurred by, or claims asserted against, such Contributor by reason
       of your accepting any such warranty or additional liability.
 
-   END OF TERMS AND CONDITIONS

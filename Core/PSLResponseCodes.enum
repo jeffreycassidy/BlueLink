@@ -1,0 +1,34 @@
+8'h
+Done
+0x00
+Command is complete. Any and all data requests have been made for the request to/from the buffer inter- face. Data movement between the accelerator and the PSL for these requests is complete.
+AError
+0x01
+Command has resulted in an address translation error. All further commands will be “Flushed” until a restart command is accepted on the command interface.
+DError
+0x03
+Command has resulted in a data error. All further commands will be “Flushed” until a restart command is accepted on the command interface.
+NLock
+0x04
+Command requires a lock status that is not present
+NRes
+0x05
+Command requires a reservation that is not present
+Flushed
+0x06
+Command follows a command that failed and is flushed.
+Fault
+0x07
+Command address could not be quickly translated. Interrupt will have been sent to O/S or hypervisor for aXh_cabt mode ABORT. The command has been terminated.
+Failed
+0x08
+Command could not be completed and can be retried at a later time.
+Credit
+0x09
+Credit manipulate
+Paged
+0x0A
+Command address could not be translated. O/S has requested the accelerator continue. The command has been terminated. All further commands will be “Flushed” until a restart command is accepted on the command interface.
+Invalid
+0xff
+Invalid tag

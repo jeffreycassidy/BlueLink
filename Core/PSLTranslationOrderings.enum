@@ -1,0 +1,19 @@
+3'b
+000
+Strict
+Translation will proceed in order relative to other aXh_cabt=000 operations. This means that ERAT (Effective to Real Address Translation) misses and protection violations will stall subsequent aXh_cabt=000 operations prior to translation efforts. If the interrupt response is “continue” the command will receive the “PAGED” response and all subsequent aXh_cabt=”000” commands that will get “FLUSHED” responses until a restart command is received. This ensures the order of translation interrupts will be the same as the order of command submission, and loads and stores that follow a translation event have not been executed if state needs to be saved and restored during the handling of a translation interrupt.
+001
+Abort
+If translation for the command results in a protection violation or the table walk process fails, the command will receive the “FAULT” response and an interrupt is sent. Only this command will be terminated.
+010
+Page
+Translation will be in order only for addresses in the same effective page, accesses to different pages will exit translation in a high performance order. If translation for the command results in a protection violation or the table walk process fails the command an interrupt will be sent. If the interrupt response is “continue” then the command will receive “PAGED” response and all subsequent commands that hit this page will receive “FLUSHED” response until a command restart for an address in the same effective page is received. Commands outside of this effective page are not affected.
+011
+Pref
+If translation for the command results in a protection violation or the table walk process fails the command will receive the “FAULT” response. Only this command will be terminated. No interrupt will be generated.
+111
+Spec
+If translation for the command results in a protection violation or an ERAT miss, the command will receive the “FAULT” response. Only this command will be ter- minated. No interrupt will be generated.
+Invalid
+100
+Invalid value (3'b111 taken)

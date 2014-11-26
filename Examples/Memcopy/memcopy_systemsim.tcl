@@ -3,7 +3,7 @@
 # Modifications by Jeffrey Cassidy
 #
 
-# This script should be run in the Mambo functional simulator to talk to the Verilog AFU simulation
+# This script should be run in the Systemsim functional simulator to talk to the Verilog AFU simulation
 
 if { [info exists env(CAPI_AFU_HOST)] == 0 } { 
     set host localhost

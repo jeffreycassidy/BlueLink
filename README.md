@@ -17,7 +17,7 @@ RAM/regs/MLABS are just being packaged for release).
 Dependencies
 ------------
 
-* Mambo, the IBM POWER8 functional simulator
+* Systemsim, the IBM POWER8 functional simulator
     Tested with version 1.0-2 Build 10:00:31 Oct 29 2014
     Available ftp://public.dhe.ibm.com/software/server/powerfuncsim/p8/packages/v1.0-2
 
@@ -42,7 +42,7 @@ to the location of the AFU driver file from PSLSE. You will also need to compile
 
 Once the core files are made, you can proceed to Examples/ and compile the examples using the instructions there.
 
-NOTE: The new version of Mambo requires GLIBC v >2.15, which is not yet standard on some Linux distros (incl Debian Wheezy).
+NOTE: The new version of Systemsim requires GLIBC v >2.15, which is not yet standard on some Linux distros (incl Debian Wheezy).
 For Debian Wheezy, the problem can be solved by installing GLIBC 2.19 from Sid (you must edit your dpkg sources.list), though
 that broke ModelSim's GUI (at least if using Altera edition; solution was to use two VMs).
 
@@ -56,7 +56,7 @@ The following environment variables can influence the package/demo function
 CAPI_AFU_DRIVER  	| Specifies the location of the AFU driver shared library in PSLSE (required for Verilog simulation)
 CAPI_AFU_HOST		| AFU hostname (defaults to localhost)
 CAPI_AFU_PORT		| AFU port (defaults to 32768)
-CAPI_MAMBO_PATH		| Path to Mambo root
+CAPI_SYSTEMSIM_PATH	| Path to Systemsim root
 BLUELOGIC   		| Path to the BlueLogic library (defaults to ../BlueLogic from BlueLink path)
 BLUELINK    		| Path to the BlueLink library
 

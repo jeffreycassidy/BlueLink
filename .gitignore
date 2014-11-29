@@ -1,0 +1,8 @@
+transcript
+work/
+*.so
+*.o
+mk*.cxx
+mk*.h
+mk*.v
+*.bo

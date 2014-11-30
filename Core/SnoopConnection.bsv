@@ -29,6 +29,8 @@ import Convenience::*;
 
 import PSLTypes::*;
 
+// default instance just connects the arguments
+
 typeclass SnoopConnection#(type ifc_a,type ifc_b) provisos (Connectable#(ifc_a,ifc_b));
     module mkSnoopConnection#(String name_a,ifc_a a,String name_b,ifc_b b)();
         mkConnection(a,b);
@@ -71,7 +73,7 @@ endinstance
 instance SnoopConnection#(ClientU#(req_t,res_t),ServerFL#(req_t,res_t,lat)) provisos (FShow#(req_t),FShow#(res_t));
     module mkSnoopConnection#(String name_a,ClientU#(req_t,res_t) c,String name_b,ServerFL#(req_t,res_t,lat) s)();
         mkSnoopConnection(name_a,toGet(asIfc(c.request)), name_b,s.request);
-        mkSnoopConnection(name_b,toGet(asIfc(s.response)),name_a,c.response);
+        mkSnoopConnection(name_b,s.response,name_a,c.response);
     endmodule
 endinstance
 

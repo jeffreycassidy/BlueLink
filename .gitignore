@@ -4,5 +4,11 @@ work/
 *.o
 mk*.cxx
 mk*.h
+model_mk*.h
+.DS_Store
+a.out
+*.ba
+pseries_nvram.*.bin
 mk*.v
 *.bo
+

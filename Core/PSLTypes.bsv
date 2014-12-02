@@ -255,7 +255,7 @@ typedef struct {
     EAddress64              cea;
     UInt#(16)               cch;
     UInt#(12)               csize;  // Size in bytes (must be power of 2)
-} CacheCommand deriving(Bits);
+} CacheCommand deriving(Bits,FShow);
 
 typedef struct {
     DataWithParity#(RequestTag,OddParity)   ctag;
@@ -370,6 +370,11 @@ interface PSLBufferInterfaceWithParity;
         interface ReadOnly#(BufferWriteWithParity)                                  readdata;
 endinterface
 
+interface PSLBufferInterface;
+    interface ClientU#(BufferReadRequest,Bit#(512))     writedata;
+    interface ReadOnly#(BufferWrite)                    readdata;
+endinterface
+
 // the AFU side is parametrized by its read latency
 interface AFUBufferInterfaceWithParity#(numeric type brlat);
     interface ServerFL#(BufferReadRequestWithParity,DWordWiseOddParity512,brlat)    writedata;
@@ -392,6 +397,12 @@ instance Connectable#(PSLBufferInterfaceWithParity,AFUBufferInterfaceWithParity#
     endmodule
 endinstance
 
+instance Connectable#(PSLBufferInterface,AFUBufferInterface#(lat));
+    module mkConnection#(PSLBufferInterface pslbuff,AFUBufferInterface#(brlat) afubuff)();
+        mkConnection(pslbuff.readdata,afubuff.readdata);
+        mkConnection(pslbuff.writedata,toServer(afubuff.writedata));
+    endmodule
+endinstance
 
 ////////////////////////////////////////////////////////////////////////////////
 // Buffer read request/response (PSL asking accelerator to provide data for write)

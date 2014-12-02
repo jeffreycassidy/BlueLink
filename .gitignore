@@ -5,6 +5,7 @@ work/
 mk*.cxx
 mk*.h
 model_mk*.h
+model_mk*.cxx
 .DS_Store
 a.out
 *.ba

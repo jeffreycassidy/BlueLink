@@ -74,8 +74,12 @@ endinterface
 
 instance Connectable#(ClientU#(req_t,res_t),ServerARU#(req_t,res_t));
     module mkConnection#(ClientU#(req_t,res_t) client,ServerARU#(req_t,res_t) server)();
-        mkConnection(client.request,server.request);
-        mkConnection(server.response,client.response);
+        rule reqconnect;
+            server.request.put(client.request);
+        endrule
+        rule resconnect;
+            client.response.put(server.response);
+        endrule
     endmodule
 endinstance
 
@@ -83,7 +87,9 @@ endinstance
 // Note: client is unbuffered, user must make sure that Server does not ignore a request due to blocking
 instance Connectable#(ClientU#(req_t,res_t),Server#(req_t,res_t));
     module mkConnection#(ClientU#(req_t,res_t) client,Server#(req_t,res_t) server)();
-        mkConnection(client.request,server.request);
+        rule reqconn;
+            server.request.put(client.request);
+        endrule
         mkConnection(server.response,client.response);
     endmodule
 endinstance
@@ -392,14 +398,18 @@ endinterface
 
 instance Connectable#(PSLBufferInterfaceWithParity,AFUBufferInterfaceWithParity#(lat));
     module mkConnection#(PSLBufferInterfaceWithParity pslbuff,AFUBufferInterfaceWithParity#(brlat) afubuff)();
-        mkConnection(pslbuff.readdata,afubuff.readdata);
+        rule readconn;
+            afubuff.readdata.put(pslbuff.readdata);
+        endrule
         mkConnection(pslbuff.writedata,toServer(afubuff.writedata));
     endmodule
 endinstance
 
 instance Connectable#(PSLBufferInterface,AFUBufferInterface#(lat));
     module mkConnection#(PSLBufferInterface pslbuff,AFUBufferInterface#(brlat) afubuff)();
-        mkConnection(pslbuff.readdata,afubuff.readdata);
+        rule readconn;
+            afubuff.readdata.put(pslbuff.readdata);
+        endrule
         mkConnection(pslbuff.writedata,toServer(afubuff.writedata));
     endmodule
 endinstance

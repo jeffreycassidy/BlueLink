@@ -9,7 +9,7 @@ import Memcopy::*;
 import SnoopConnection::*;
 
 module mkMemcopyTB();
-	AFU#(4) afu <- mkMemcopy;
+	AFU#(1) afu <- mkMemcopy;
 	let 	psl <- mkPSL(afu.description);
 
 	mkSnoopConnection("PSL",psl,"AFU",afu);

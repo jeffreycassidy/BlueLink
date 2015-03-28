@@ -5,6 +5,7 @@
 # rs		Re-source the script file
 # sim		Run simulation, driving clock on 4ns period and deasserting RST_N for 4ns
 
+
 proc com {} {
     vlog +define+BSV_ASSIGNMENT_DELAY=\#1 -timescale 1ns/1ns mkMemcopyTB.v \
         ../../PSLVerilog/psl_sim.v ../../PSLVerilog/psl_sim_wrapper.v
@@ -27,6 +28,7 @@ proc sim {} {
     com
     vsim -pli $afulib mkMemcopyTB -t 1ns
 
+	onfinish stop
 	force -drive RST_N 1'b0,1'b1 4
     force -drive -repeat 4ns CLK 1'b0 0,1'b1 2
 

@@ -19,7 +19,7 @@ package Memcopy;
 
 // This is a very simple reimplementation of the IBM Memcopy demo from the CAPI Demo Kit
 // Copies a specified size (bytes, must be cache-aligned) from one address range to another
-// Only uses a single in-flight tag at a time, read latency=4
+// Only uses a single in-flight tag at a time, read latency=1
 //
 // Request is described by a WED (see definition below for setup details), and starts when given the start command
 // 
@@ -40,24 +40,74 @@ import ClientServerFL::*;
 /***********************************************************************************************************************************
  * Memcopy AFU
  *
- * Fixed buffer read latency of 4, no parity generation or checking
+ * Fixed buffer read latency of 1, no parity generation or checking
  */
 
+typedef enum {
+    DedicatedProcess=16'h8010,
+    Invalid=16'haaaa
+} ProgrammingModel deriving (Bits);
+
+//typedef struct {
+//    // Config dword 0x00
+//    UInt#(16) num_ints_per_process;
+//    UInt#(16) num_of_processes;
+//    UInt#(16) num_of_afu_CRs;
+//    ProgrammingModel req_prog_model;
+//
+//    // Config dwords 0x08 - 0x18
+//    ReservedZero#(64) resv0x08;
+//    ReservedZero#(64) resv0x10;
+//    ReservedZero#(64) resv0x18;
+//
+//    // Config dword 0x20
+//    ReservedZero#(8)    resv0x20_0_7
+//    UInt#(24)           afu_cr_len;
+//
+//    // Config dword 0x24
+//    UInt#(64)           afu_cr_offset;
+//
+//} AFU_Config_Descriptor deriving(Bits);
+
 typedef struct {
-    EAddress64      addr_from;
-    EAddress64      addr_to;
+    UInt#(16)           num_ints_per_process;
+    UInt#(16)           num_of_processes;
+    UInt#(16)           num_of_afu_CRs;
+    ProgrammingModel    req_prog_model;
+} AFU_Config_Descriptor_0 deriving(Bits);
+
+typedef struct { UInt#(64) addr; } EAddress64LE deriving(Eq);
+
+function Bit#(nb) byteEndianSwap(Bit#(nb) i) provisos (Mul#(8,nw,nb));
+    Vector#(nw,Bit#(8)) v = unpack(i);
+    return pack(reverse(v));
+endfunction
+
+instance Bits#(EAddress64LE,64);
+    function Bit#(64)       pack(EAddress64LE a) = byteEndianSwap(pack(a.addr));
+    function EAddress64LE   unpack(Bit#(64) i) = EAddress64LE { addr: unpack(byteEndianSwap(i)) };
+endinstance
+
+instance FShow#(EAddress64LE);
+    function Fmt fshow(EAddress64LE a) = $format("0x%016X",a.addr);
+endinstance
+
+
+typedef struct {
+    EAddress64LE    addr_from;
+    EAddress64LE    addr_to;
     UInt#(64)       size;
     Reserved#(832)  resv;
 } WED deriving(Bits);
 
 instance FShow#(WED);
     function Fmt fshow(WED wed) =
-        $format("Copying %d bytes from %016X to %016X",wed.size,wed.addr_from,wed.addr_to);
+        $format("Copying %d bytes from %016X to %016X",byteEndianSwap(pack(wed.size)),wed.addr_from,wed.addr_to);
 endinstance
 
 
 
-module mkMemcopy(AFU#(4));
+module mkMemcopy(AFU#(1));
     // setup parameters
     Reg#(EAddress64) ea <- mkReg(0);
     Reg#(EAddress64) copy_from  <- mkReg(0);
@@ -89,7 +139,7 @@ module mkMemcopy(AFU#(4));
 
     // Data buffering functions
     SegmentedReg#(Bit#(1024),2,512,6)   readbuf     <- mkSegmentedReg;          // holds read data while waiting to write
-    BubblePipe#(4,UInt#(6))             brad_d      <- mkBubblePipe;            // delays the buffer read address 4 cycles
+    BubblePipe#(2,UInt#(6))             brad_d      <- mkBubblePipe;            // delays the buffer read address 1 cycle
     Wire#(BufferWrite)                  wbuf        <- mkWire;                  // write buffer command
 
     // FSM for handling memcpy
@@ -117,9 +167,10 @@ module mkMemcopy(AFU#(4));
             await(completion==0);
             $display($time,": Memcopy block running with WED: ",fshow(wed));
 
-            copy_from <= wed.addr_from;
-            copy_to   <= wed.addr_to;
-            copy_end  <= wed.addr_from + EAddress64 { addr: wed.size};
+            copy_from.addr <= wed.addr_from.addr;
+            copy_end.addr  <= wed.addr_from.addr + unpack(byteEndianSwap(pack(wed.size)));
+
+            copy_to.addr   <= wed.addr_to.addr;
         endaction
 
         // do the transfer using a single tag and single data buffer
@@ -128,12 +179,21 @@ module mkMemcopy(AFU#(4));
             requestRead(0,copy_from);
             await(completion==0);
 
-            requestWrite(0,copy_to);
-            await(completion==0);
+            par
+                requestWrite(0,copy_to);
+                copy_from <= copy_from+128;
+            endpar
 
-            copy_from <= copy_from+128;
-            copy_to   <= copy_to+128;
+            par
+                await(completion==0);
+                copy_to   <= copy_to+128;
+            endpar
         endseq
+
+
+        // request interrupt service when done
+        cmd._write(tagged Valid CacheCommand { ctag: 0, cch: 0, com: Intreq, cea: 1, csize: 0, cabt: Strict });
+        await(completion==0);
 
         st_running <= False;
         noAction;
@@ -160,7 +220,28 @@ module mkMemcopy(AFU#(4));
         endinterface
 
         interface ReadOnly response;
-            method DataWithParity#(MMIOResponse,OddParity) _read if (isValid(mmio_req)) = parity_x(?);
+            method DataWithParity#(MMIOResponse,OddParity) _read if (mmio_req matches tagged Valid .req);
+                if (parity_maybe(True,req) matches tagged Valid .v &&& v.mmrnw &&& v.mmdw)
+                    if (v.mmcfg)
+                        return parity_x(
+                            case (v.mmad) matches
+                            24'h00: tagged DWordData pack (AFU_Config_Descriptor_0 {
+                                req_prog_model: DedicatedProcess,
+                                num_of_afu_CRs: 0,
+                                num_of_processes: 1,
+                                num_ints_per_process: 1 });
+                            24'h08: tagged DWordData 64'h0;                      // reserved
+                            24'h10: tagged DWordData 64'h0;                      // reserved
+                            24'h18: tagged DWordData 64'h0;                      // reserved
+                            24'h20: tagged DWordData 64'h0;                      // 63:8 AFU_CR_len, 7:0 reserved
+                            24'h28: tagged DWordData 64'h0;                      // AFU_CR_offset (offset from start of AFU descriptor, 256B aligned)
+                            default: tagged DWordData  64'h0;
+                        endcase);
+                    else
+                        return parity_x(tagged DWordData 64'h0);
+                else
+                    return parity_x(tagged DWordData 64'h0);
+            endmethod
         endinterface
     endinterface
 
@@ -173,6 +254,7 @@ module mkMemcopy(AFU#(4));
             method Action put(CacheResponseWithParity resp);
                 case (resp.response) matches
                     Done: completion <= resp.rtag.data;
+                    Paged: cmd._write(tagged Valid CacheCommand { ctag: 0, cch: 0, com: Restart, cea: copy_from, csize: 128, cabt: Strict }) ;
                     default: $display("** Don't know what to do with a response of type ",fshow(resp.response)," **");
                 endcase
             endmethod
@@ -183,10 +265,9 @@ module mkMemcopy(AFU#(4));
         // Since we're using a single tag and a single register to buffer, just pipe the buffer read address (0/1 => lower/upper)
         // for four cycles and then send back the appropriate half-line
 
-		// TODO: Check why need to flip the read index here (appears to me but unsure PSL simulator may reverse this accidentally?)
         interface ServerFL writedata;
             interface Put request;
-                method Action put(BufferReadRequestWithParity rreqp) = brad_d.send((ignore_parity(rreqp).brad+1)%2);
+                method Action put(BufferReadRequestWithParity rreqp) = brad_d.send(ignore_parity(rreqp).brad);
             endinterface
 
             interface Get response;
@@ -236,7 +317,7 @@ module mkMemcopy(AFU#(4));
             lroom:      ?,
             pargen:     False,
             parcheck:   False,
-            brlat:      4
+            brlat:      1
         };
 
 endmodule

@@ -8,7 +8,7 @@
 
 proc com {} {
     vlog +define+BSV_ASSIGNMENT_DELAY=\#1 -timescale 1ns/1ns mkMemcopyTB.v \
-        ../../PSLVerilog/psl_sim.v ../../PSLVerilog/psl_sim_wrapper.v
+        ../../PSLVerilog/psl_sim.v ../../PSLVerilog/psl_sim_wrapper.v /usr/local/Bluespec/lib/Verilog/SizedFIFO.v
 }
 
 proc rs {} {

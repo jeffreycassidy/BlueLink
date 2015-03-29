@@ -173,6 +173,8 @@ module mkMemcopy(AFU#(1));
             copy_to.addr   <= wed.addr_to.addr;
         endaction
 
+        noAction;
+
         // do the transfer using a single tag and single data buffer
         while (copy_from < copy_end)
         seq
@@ -190,6 +192,7 @@ module mkMemcopy(AFU#(1));
             endpar
         endseq
 
+        noAction;
 
         // request interrupt service when done
         cmd._write(tagged Valid CacheCommand { ctag: 0, cch: 0, com: Intreq, cea: 1, csize: 0, cabt: Strict });
@@ -254,7 +257,7 @@ module mkMemcopy(AFU#(1));
             method Action put(CacheResponseWithParity resp);
                 case (resp.response) matches
                     Done: completion <= resp.rtag.data;
-                    Paged: cmd._write(tagged Valid CacheCommand { ctag: 0, cch: 0, com: Restart, cea: copy_from, csize: 128, cabt: Strict }) ;
+//                    Paged: cmd._write(tagged Valid CacheCommand { ctag: 0, cch: 0, com: Restart, cea: copy_from, csize: 128, cabt: Strict }) ;
                     default: $display("** Don't know what to do with a response of type ",fshow(resp.response)," **");
                 endcase
             endmethod

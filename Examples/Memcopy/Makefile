@@ -6,8 +6,10 @@ ifndef BLUELINK
 	BLUELINK=../..
 endif
 
-BLUESPEC_PATH=+:$(BLUELOGIC)/Pipeline:$(BLUELINK)/Core:$(BLUELOGIC)/Convenience
+BLUESPEC_PATH=+:$(BLUELOGIC)/Pipeline:$(BLUELINK)/Core:$(BLUELOGIC)/Convenience:$(BLUELINK)/TagManager
 CAPI_PSL_DIR=/home/parallels/src/CAPI
+
+default: mkMemcopyTB.v
 
 host_memcopy: host_memcopy.cpp
 	g++ -Wall -fPIC -std=c++11 -I$(CAPI_PSL_DIR) -I$(CAPI_PSL_DIR)/pslse/pslse -L$(CAPI_PSL_DIR)/pslse/pslse -I$(CAPI_PSL_DIR) -o $@ $< $(CAPI_PSL_DIR)/pslse/pslse/libcxl.a -lpthread -lcxl

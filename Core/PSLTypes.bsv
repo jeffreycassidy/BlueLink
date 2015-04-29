@@ -27,6 +27,7 @@ import PSLJobOpcodes::*;
 import PSLControlCommands::*;
 import PSLTranslationOrderings::*;
 import PSLResponseCodes::*;
+import Assert::*;
 
 import ClientServerFL::*;
 import Convenience::*;
@@ -47,8 +48,6 @@ export FShow::*;
 
 // export this module
 export PSLTypes::*;
-
-
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -103,6 +102,18 @@ instance Connectable#(ClientU#(req_t,res_t),ServerFL#(req_t,res_t,lat));
 endinstance
 
 
+typedef struct {
+    UInt#(4)    brlat;      // buffer read latency (for write commands)
+    Bool        pargen;     // parity generation enable
+    Bool        parcheck;   // check parity at inputs
+} AFUAttributes deriving(Bits);
+
+typedef struct {
+    UInt#(8)    croom;
+} PSLAttributes deriving(Bits);
+
+
+
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -115,129 +126,16 @@ typedef DataWithParity#(Bit#(512),WordWiseParity#(8,OddParity))     DWordWiseOdd
 typedef struct { UInt#(64) code; } ErrorCode    deriving(Eq,Bits,Literal);
 typedef struct { UInt#(64) addr; } EAddress64   deriving(Eq,Bits,Arith,Literal,Ord);
 
+instance SizedLiteral#(EAddress64,64);
+    function EAddress64 fromSizedInteger(Bit#(64) b) = EAddress64 { addr: unpack(b) };
+endinstance
+
 instance FShow#(ErrorCode);
     function Fmt fshow(ErrorCode e) = $format("Error %-d",e.code);    
 endinstance
 
 instance FShow#(EAddress64);
     function Fmt fshow(EAddress64 a) = $format("EA 0x%016X",a.addr);
-endinstance
-
-
-
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// PSL & AFU toplevel interfaces
-//
-// PSL and AFU are mostly conjugate interfaces (generally a Put for every Get, Client for every Server etc)
-// some glue logic is required to connect the control interface (found in the Connectable#(...) instance )
-// 
-// The client should write a module conforming to the AFU interface, instantiate it and a mkPSL, and then connect the two
-
-
-
-/** Basic PSL interface, using as direct a mapping as possible from module ports to BSV methods
- */
-
-interface PSL;
-    interface ServerARU#(CacheCommandWithParity,CacheResponseWithParity)                command;
-    interface PSLBufferInterfaceWithParity                                              buffer;
-    interface ClientU#(MMIOCommandWithParity,DataWithParity#(MMIOResponse,OddParity))   mmio;
-
-    interface ReadOnly#(JobControlWithParity)                               control;
-
-    (* always_enabled,always_ready *)
-    method Action status(UInt#(64) ah_jerror, Bool ah_jrunning);
-
-    (* always_ready *)
-    method Action done;             // assert for single pulse to ack reset, or say accelerator done
-
-    (* always_ready *)
-    method Action yield;            // single-cycle pulse to yield
-
-    (* always_ready *)
-    method Action tbreq;            // single-cycle pulse to request timebase
-
-    (* always_ready *)
-    method Action jcack;
-
-    (* always_ready *)
-    method PSL_Description description;
-endinterface
-
-// Static PSL descriptor passed to AFU; static from reset to done, may change in between
-typedef struct {
-    UInt#(8)    croom;              // Number of supported in-flight commands
-} PSL_Description deriving(Bits);
-
-
-
-
-/** Basic AFU interface
- * Numeric type parameter brlat specifies buffer read latency
- *
- * Client module can provide this and connect to the PSL, but other interfaces offer more functionality
- */
-
-interface AFU#(numeric type brlat);
-    interface ClientU#(CacheCommandWithParity,CacheResponseWithParity)  command;
-    interface AFUBufferInterfaceWithParity#(brlat)                      buffer;
-    interface ServerARU#(MMIOCommandWithParity,DataWithParity#(MMIOResponse,OddParity))  mmio;
-
-    (* always_ready *)
-    interface Put#(JobControlWithParity)  control;
-
-    (* always_ready *)
-    method Bool tbreq;
-
-    (* always_ready *)
-    method Bool yield;
-
-    (* always_ready *)
-    method AFU_Status status;
-
-    // static method, must not change during operation (once reset done)
-    (* always_ready *)
-    method AFU_Description                                              description;
-endinterface
-
-typedef struct {
-    UInt#(4)    brlat;      // buffer read latency (for write commands)
-    UInt#(8)    lroom;      // # LPC/Internal cache ops accelerator can handle (?)
-    Bool        pargen;     // parity generation enable
-    Bool        parcheck;   // check parity at inputs
-} AFU_Description deriving(Bits);
-
-// Simple status descriptor
-typedef struct {
-    Bool        running;
-    Bool        done;
-    UInt#(64)   errcode;
-} AFU_Status deriving(Bits);
-
-
-
-/** Basic PSL-AFU connection, passing through parity (does not do any parity checks or enforce PSL interface handshakes
- * (eg. single-clock pulse for done etc)
- */
-
-instance Connectable#(PSL,AFU#(brlat));
-    module mkConnection#(PSL psl,AFU#(brlat) afu)();
-        mkConnection(afu.command,psl.command);
-        mkConnection(psl.buffer,afu.buffer);
-        mkConnection(psl.mmio,afu.mmio);
-        mkConnection(toGet(psl.control),afu.control);
-
-        // assert done to PSL if afu output high (does NOT ensure single-clock pulse!)
-        mkDoIf(afu.status.done,psl.done);
-
-        // send status to PSL (does NOT ensure correct transitions!)
-        rule sendstatus;
-            psl.status(afu.status.errcode,afu.status.running);
-        endrule
-
-        // TODO: add jcack, tbreq, yield
-    endmodule
 endinstance
 
 
@@ -381,38 +279,6 @@ interface PSLBufferInterface;
     interface ReadOnly#(BufferWrite)                    readdata;
 endinterface
 
-// the AFU side is parametrized by its read latency
-interface AFUBufferInterfaceWithParity#(numeric type brlat);
-    interface ServerFL#(BufferReadRequestWithParity,DWordWiseOddParity512,brlat)    writedata;
-
-    (* always_ready *)
-    interface Put#(BufferWriteWithParity)                                           readdata;
-endinterface
-
-interface AFUBufferInterface#(numeric type brlat); 
-    interface ServerFL#(BufferReadRequest,Bit#(512),brlat)                          writedata;
-
-    (* always_ready *)
-    interface Put#(BufferWrite)                                                     readdata;
-endinterface
-
-instance Connectable#(PSLBufferInterfaceWithParity,AFUBufferInterfaceWithParity#(lat));
-    module mkConnection#(PSLBufferInterfaceWithParity pslbuff,AFUBufferInterfaceWithParity#(brlat) afubuff)();
-        rule readconn;
-            afubuff.readdata.put(pslbuff.readdata);
-        endrule
-        mkConnection(pslbuff.writedata,toServer(afubuff.writedata));
-    endmodule
-endinstance
-
-instance Connectable#(PSLBufferInterface,AFUBufferInterface#(lat));
-    module mkConnection#(PSLBufferInterface pslbuff,AFUBufferInterface#(brlat) afubuff)();
-        rule readconn;
-            afubuff.readdata.put(pslbuff.readdata);
-        endrule
-        mkConnection(pslbuff.writedata,toServer(afubuff.writedata));
-    endmodule
-endinstance
 
 ////////////////////////////////////////////////////////////////////////////////
 // Buffer read request/response (PSL asking accelerator to provide data for write)
@@ -514,6 +380,13 @@ typedef struct {
     DataWithParity#(Bit#(64),OddParity)     mmdata;     // data (word read must duplicate high/low)
 } MMIOCommandWithParity deriving(Bits);
 
+//typedef union tagged {
+//    MMIORWRequestWithParity Config;
+//    MMIORWRequestWithParity PSA;
+//} MMIORequest;
+//
+
+
 typedef struct {
     Bool        mmcfg;
     Bool        mmrnw;
@@ -561,29 +434,49 @@ endinstance
 
 ////////////////////////////////////////////////////////////////////////////////
 // MMIO Response (note read data should be duplicated high/low)
-// Request is outstanding until ACK'd
 
+
+// The Bits#() representation here carries 2 extra bits for the tags; can be dropped with rawBits()
 typedef union tagged {
     void        WriteAck;
     Bit#(32)    WordData;
     Bit#(64)    DWordData;
-} MMIOResponse;
+} MMIOResponse deriving(Bits,Eq);
 
-instance Bits#(MMIOResponse,64);
-    function Bit#(64) pack(MMIOResponse u) = case (u) matches
-        tagged WriteAck:        ?;
-        tagged WordData .wd:    { wd, wd };
-        tagged DWordData .dwd:  dwd;
+instance FShow#(MMIOResponse);
+    function Fmt fshow(MMIOResponse r) = case (r) matches
+        tagged WriteAck:          fshow("MMIO Write Ack             ");
+        tagged WordData .w:     $format("MMIO Word  %08X        ",w);
+        tagged DWordData .dw:   $format("MMIO DWord %016X",dw);
     endcase;
 endinstance
 
-instance FShow#(MMIOResponse);
-    function Fmt fshow(MMIOResponse resp) = fshow("MMIO Response: ") + (case(resp) matches
-        tagged WriteAck:         fshow("Ack                     ");
-        tagged WordData .w:     (fshow("Word  ") + fshow(w) + fshow("        "));
-        tagged DWordData .dw:   (fshow("DWord ") + fshow(dw));
-        endcase);
-endinstance
+function Bit#(64) rawBits(MMIOResponse r) = case (r) matches
+    tagged DWordData .dw:   dw;
+    tagged WordData .w:     { w,w };
+    tagged WriteAck:        64'h0;
+endcase;
+
+
+//typedef struct {
+//    MMIOResponse    data;
+//    Bit#(1)         parity;
+//} MMIOResponseWithParity deriving(Bits);
+
+//function Bit#(64) rawbits(MMIOResponse resp) = case (resp) matches
+//    tagged WriteAck: 64'b0;
+//    tagged WordData .w: { w,w };
+//    tagged DWordData .dw: dw;
+//endcase;
+//
+//instance ParityStruct#(MMIOResponse,MMIOResponseWithParity);
+//    function MMIOResponseWithParity make_parity_struct(Bool pargen,MMIOResponse resp) = 
+//        MMIOResponseWithParity { data: resp, parity: (pargen ? OddParity'(data).pbit : ?) };
+//
+//    function Bool parity_ok(MMIOResponseWithParity respp) = OddParity'(parity(rawbits(respp.data)))==respp.parity;
+//
+//    function MMIOResponse ignore_parity(MMIOResponseWithParity respp) = respp.data;
+//
 
 
 
@@ -636,38 +529,53 @@ endinstance
 
 
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Segmented register
-//
-// Allows a register to be read and written in pieces, or read as a whole (typical use for P8 cache line reg, eg. WED)
-//
-// Segments are read/written using writeseg(idx,data) or readseg(idx); whole register read using _read method
-//
-//  data_t  The complete data type
-//  ns      Number of segments
-//  nbs     Number of bits per segment
-//  ni      Number of index bits
+/* AFU return status
+ *
+ */
 
-interface SegmentedReg#(type data_t,numeric type ns,numeric type nbs,numeric type ni);
-    (* always_ready *)
-    method Action writeseg(UInt#(ni) idx,Bit#(nbs) data);
 
-    (* always_ready *)
-    method Bit#(nbs) readseg(UInt#(ni) idx);
+typedef union tagged {
+    void Done;
+    UInt#(64) Error;
+} ReturnCode deriving(Bits,Eq,FShow);
 
-    (* always_ready *)
-    method data_t _read;
+
+
+
+/* SegReg
+ *
+ * A segmented register, accessible either as a whole (r.entire) or in segments (r.seg[N])
+ *
+ * When transferring lines, increasing brad/bwad is increasing memory address
+ *
+ * But in Bluespec, vectors are stored in descending index order
+ *
+ * Vector indices are reversed because Bluespec stores vectors in ascending order
+ * 
+ * Vector elements (L to R): v[N-1] v[N-2] .. v[1] v[0]
+ * and order is big-endian within bit vectors
+ *
+ *
+ */
+
+
+interface SegReg#(type t,numeric type ns,numeric type nbs);
+    interface Vector#(ns,Reg#(Bit#(nbs))) seg;
+    interface Reg#(t) entire;
 endinterface
 
-module mkSegmentedReg(SegmentedReg#(data_t,ns,nbs,ni)) provisos (Bits#(data_t,nb),Mul#(nbs,ns,nb));
-    Vector#(ns,Reg#(Bit#(nbs))) regs <- replicateM(mkReg(0));
-    
-    method Action writeseg(UInt#(ni) idx,Bit#(nbs) data)    = regs[idx]._write(data);
-    method Bit#(nbs) readseg(UInt#(ni) idx)                 = regs[idx]._read;
 
-    method data_t _read = unpack(pack(readVReg(reverse(regs))));
+module mkSegReg#(t init)(SegReg#(t,ns,nbs)) provisos (Div#(nb,nbs,ns),Mul#(ns,nbs,nb),Bits#(t,nb));
+    Vector#(ns,Bit#(nbs)) initChunks = reverse(toChunks(pack(init)));
+    Vector#(ns,Reg#(Bit#(nbs))) r <- genWithM(compose(mkReg,select(initChunks)));
+
+    interface Vector seg = r;
+
+    interface Reg entire;
+        method Action _write(t i) = writeVReg(reverse(r),toChunks(pack(i)));
+        method t _read = unpack(pack(readVReg(reverse(r))));
+    endinterface
 endmodule
 
-typedef SegmentedReg#(data_t,2,512,6) P8CacheLineReg#(type data_t);
 
 endpackage

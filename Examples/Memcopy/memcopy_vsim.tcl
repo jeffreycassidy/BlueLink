@@ -5,10 +5,10 @@
 # rs		Re-source the script file
 # sim		Run simulation, driving clock on 4ns period and deasserting RST_N for 4ns
 
-
 proc com {} {
-    vlog +define+BSV_ASSIGNMENT_DELAY=\#1 -timescale 1ns/1ns mkMemcopyTB.v \
-        ../../PSLVerilog/psl_sim.v ../../PSLVerilog/psl_sim_wrapper.v /usr/local/Bluespec/lib/Verilog/SizedFIFO.v
+	global env
+    vlog +define+BSV_ASSIGNMENT_DELAY=\#1 -timescale 1ns/1ns mkMemcopyTB.v mkMemcopyAFU.v \
+        ../../PSLVerilog/psl_sim.v ../../PSLVerilog/psl_sim_wrapper.v $env(BLUESPECDIR)/Verilog/SizedFIFO.v $env(BLUESPECDIR)/Verilog/SizedFIFO0.v $env(BLUESPECDIR)/Verilog/FIFO1.v $env(BLUESPECDIR)/Verilog/FIFO2.v
 }
 
 proc rs {} {
@@ -26,11 +26,14 @@ puts "afulib = $afulib"
 proc sim {} {
     global afulib
     com
-    vsim -pli $afulib mkMemcopyTB -t 1ns
+    vsim -pli $afulib top -t 1ns
 
 	onfinish stop
-	force -drive RST_N 1'b0,1'b1 4
-    force -drive -repeat 4ns CLK 1'b0 0,1'b1 2
+	force -drive -freeze a0/RST_N 1'b0 -cancel @4
+#a    	force -drive -repeat 4ns CLK 1'b0 0,1'b1 2
+}
 
-	run 2us
+proc waves {} {
+	add wave -noupdate ha_pclock
+	add wave -noupdate a0/RST_N
 }

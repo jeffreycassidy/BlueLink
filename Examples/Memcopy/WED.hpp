@@ -12,8 +12,8 @@
 
 class WED {
 	static constexpr size_t size_=128;
-	static constexpr size_t align_=128;
-	static constexpr size_t mask_=0x7f;
+	static constexpr size_t align_=size_;
+	static constexpr size_t mask_=align_-1;
 public:
 
 	WED();

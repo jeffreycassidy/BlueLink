@@ -106,7 +106,11 @@ int main (int argc, char *argv[])
 	}
 	cout << endl;
 
-	AFU afu(string("dev/cxl/afu0.0"));
+#ifdef HARDWARE
+	AFU afu(string("/dev/cxl/afu0.0d"));
+#else
+	AFU afu(string("/dev/cxl/afu0.0"));
+#endif
 
 
 	MemcopyWED* w = static_cast<MemcopyWED*>(wed.get());
@@ -121,9 +125,24 @@ int main (int argc, char *argv[])
 
 	afu.start(wed);
 
-	afu.await_event();
+	cout << "AFU started, waiting 200ms for finish" << endl;
 
-	//afu.wait_finish();
+	usleep(200000);
+
+	//afu.await_event();
+	cout << "  done" << endl;
+	
+	afu.await_event(1000);
+
+	cout << "  WED read completed, checking readback: " << endl;
+	for(unsigned i=0;i<8;++i)
+		cout << "    AFU MMIO[" << setw(2) << hex << (i<<3) << "]: " << setw(16) << afu.mmio_read64(i<<3) << endl;
+
+	cout << "Sending go signal" << endl;
+	afu.mmio_write64(0,0);
+
+	afu.await_event(1000);
+	cout << "  copy finished" << endl;
 
 	for(size_t i=Ndw; i<2*Ndw; ++i)
 		if (golden[i] != 0)
@@ -162,23 +181,6 @@ int main (int argc, char *argv[])
 		}
 		cout << endl << endl;
 	}
-
-//  while (wed0->major==0xFFFF) {
-//    struct timespec ts;
-//    ts.tv_sec = 0;
-//    ts.tv_nsec = 100;
-//    nanosleep(&ts, &ts);
-//    if (clock_gettime(CLOCK_REALTIME, &now) == -1) {
-//      perror("clock_gettime");
-//      return -1;
-//    }
-//    time_passed = (now.tv_sec - start.tv_sec) +
-//		   (double)(now.tv_nsec - start.tv_nsec) /
-//		   (double)(1000000000L);
-//    if (((int) time_passed) > timeout)
-//      break;
-//  }
-
 
   return 0;
 }

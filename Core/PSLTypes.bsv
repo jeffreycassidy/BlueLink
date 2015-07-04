@@ -539,8 +539,9 @@ typedef union tagged {
     UInt#(64) Error;
 } ReturnCode deriving(Bits,Eq,FShow);
 
-
-
+typedef Bit#(1024)  CacheLine;
+typedef Bit#(512)   CacheTransferUnit;
+typedef 2           CacheTransferUnitsPerLine;
 
 /* SegReg
  *

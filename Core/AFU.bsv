@@ -3,12 +3,6 @@ package AFU;
 import PSLTypes::*;
 import DReg::*;
 
-interface ServerAFL#(type req_t,type res_t,numeric type lat);
-    (* always_ready *)
-    interface Put#(req_t)       request;
-
-    interface ReadOnly#(res_t)  response;
-endinterface
 
 /** Basic AFU interface
  * Numeric type parameter brlat specifies buffer read latency
@@ -70,15 +64,6 @@ interface AFUStatus;
     method UInt#(64) jerror;
 
 endinterface
-
-
-
-// Simple status descriptor
-//typedef struct {
-//    Bool        running;
-//    Bool        done;
-//    UInt#(64)   errcode;
-//} AFUStatus deriving(Bits);
 
 
 // the AFU side is parametrized by its read latency

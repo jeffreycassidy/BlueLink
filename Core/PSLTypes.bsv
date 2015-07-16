@@ -58,6 +58,13 @@ export PSLTypes::*;
 //
 // This differs from normal Bluespec semantics where Get/Put often are connected with FIFOs
 
+interface ServerAFL#(type req_t,type res_t,numeric type lat);
+    (* always_ready *)
+    interface Put#(req_t)       request;
+
+    interface ReadOnly#(res_t)  response;
+endinterface
+
 interface ServerARU#(type req_t,type res_t);
     (* always_ready *)
     interface Put#(req_t)       request;
@@ -68,8 +75,66 @@ interface ClientU#(type req_t,type res_t);
     interface ReadOnly#(req_t)  request;
 
     (* always_ready *)
-    interface Put#(res_t)     response;
+    interface Put#(res_t)       response;
 endinterface
+
+
+/** Makes a Client into a ClientU, with appropriate assertions.
+ *      Requests are unbuffered and always accepted by ClientU, so pull Client request continuously and make available
+ *      Responses are always_ready, so always accept and assert that client accepts it
+ */
+
+module mkClientUFromClient#(Client#(req_t,res_t) c)(ClientU#(req_t,res_t)) provisos (Bits#(req_t,nr),Bits#(res_t,ns));
+    RWire#(req_t) req <- mkRWire;
+    RWire#(res_t) res <- mkRWire;
+    let pwAccept <- mkPulseWire;
+
+    mkConnection(c.request,toPut(req));
+
+    rule putResponse if (res.wget matches tagged Valid .v);
+        pwAccept.send;
+        c.response.put(v);
+    endrule
+
+    continuousAssert(pwAccept || !isValid(res.wget),
+        "mkClientUFromClient: Client is not ready to response despite always_ready requirement at ClientU interface");
+
+    interface Put response = toPut(res);
+    interface ReadOnly request;
+        method req_t _read if (req.wget matches tagged Valid .v) = v;
+    endinterface
+endmodule
+
+
+/** Makes a ClientU into a Client, with appropriate checks.
+ *      Requests are unbuffered, so must be consumed when available (assert)
+ *      ClientU is always_ready to accept response, so just pass through
+ */
+
+module mkClientFromClientU#(ClientU#(req_t,res_t) c)(Client#(req_t,res_t)) provisos (Bits#(req_t,nr),Bits#(res_t,ns));
+    RWire#(req_t) req <- mkRWire;
+    let pwAck <- mkPulseWire;
+
+    rule getRequest;
+        let r = c.request._read;
+        req.wset(r);        
+    endrule
+
+    continuousAssert(pwAck || !isValid(req.wget),
+        "mkClientFromClientU: Client has ignored an unbuffered request which will be discarded");
+
+    interface Get request;
+        method ActionValue#(req_t) get if (req.wget matches tagged Valid .v);
+            pwAck.send;
+            return v;
+        endmethod
+    endinterface
+    
+
+    // ClientU response is already asserted always_ready, so must be OK
+    interface Put response = c.response;
+endmodule
+
 
 instance Connectable#(ClientU#(req_t,res_t),ServerARU#(req_t,res_t));
     module mkConnection#(ClientU#(req_t,res_t) client,ServerARU#(req_t,res_t) server)();
@@ -82,6 +147,17 @@ instance Connectable#(ClientU#(req_t,res_t),ServerARU#(req_t,res_t));
     endmodule
 endinstance
 
+
+instance Connectable#(ClientU#(req_t,res_t),ServerAFL#(req_t,res_t,lat));
+    module mkConnection#(ClientU#(req_t,res_t) client,ServerAFL#(req_t,res_t,lat) server)();
+        rule reqconnect;
+            server.request.put(client.request);
+        endrule
+        rule resconnect;
+            client.response.put(server.response);
+        endrule
+    endmodule
+endinstance
 
 // Note: client is unbuffered, user must make sure that Server does not ignore a request due to blocking
 instance Connectable#(ClientU#(req_t,res_t),Server#(req_t,res_t));
@@ -380,13 +456,6 @@ typedef struct {
     DataWithParity#(Bit#(64),OddParity)     mmdata;     // data (word read must duplicate high/low)
 } MMIOCommandWithParity deriving(Bits);
 
-//typedef union tagged {
-//    MMIORWRequestWithParity Config;
-//    MMIORWRequestWithParity PSA;
-//} MMIORequest;
-//
-
-
 typedef struct {
     Bool        mmcfg;
     Bool        mmrnw;
@@ -458,27 +527,6 @@ function Bit#(64) rawBits(MMIOResponse r) = case (r) matches
 endcase;
 
 
-//typedef struct {
-//    MMIOResponse    data;
-//    Bit#(1)         parity;
-//} MMIOResponseWithParity deriving(Bits);
-
-//function Bit#(64) rawbits(MMIOResponse resp) = case (resp) matches
-//    tagged WriteAck: 64'b0;
-//    tagged WordData .w: { w,w };
-//    tagged DWordData .dw: dw;
-//endcase;
-//
-//instance ParityStruct#(MMIOResponse,MMIOResponseWithParity);
-//    function MMIOResponseWithParity make_parity_struct(Bool pargen,MMIOResponse resp) = 
-//        MMIOResponseWithParity { data: resp, parity: (pargen ? OddParity'(data).pbit : ?) };
-//
-//    function Bool parity_ok(MMIOResponseWithParity respp) = OddParity'(parity(rawbits(respp.data)))==respp.parity;
-//
-//    function MMIOResponse ignore_parity(MMIOResponseWithParity respp) = respp.data;
-//
-
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Job control interface (provided by PSL to AFU)
@@ -537,11 +585,13 @@ endinstance
 typedef union tagged {
     void Done;
     UInt#(64) Error;
-} ReturnCode deriving(Bits,Eq,FShow);
+} AFUReturn deriving(Bits,Eq,FShow);
+
 
 typedef Bit#(1024)  CacheLine;
 typedef Bit#(512)   CacheTransferUnit;
 typedef 2           CacheTransferUnitsPerLine;
+
 
 /* SegReg
  *
@@ -551,17 +601,14 @@ typedef 2           CacheTransferUnitsPerLine;
  *
  * But in Bluespec, vectors are stored in descending index order
  *
- * Vector indices are reversed because Bluespec stores vectors in ascending order
- * 
  * Vector elements (L to R): v[N-1] v[N-2] .. v[1] v[0]
  * and order is big-endian within bit vectors
- *
- *
  */
 
 
 interface SegReg#(type t,numeric type ns,numeric type nbs);
     interface Vector#(ns,Reg#(Bit#(nbs))) seg;
+
     interface Reg#(t) entire;
 endinterface
 

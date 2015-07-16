@@ -44,7 +44,7 @@ typedef union tagged {
     struct { UInt#(24) index; Bit#(32) data; }  WordWrite;
     struct { UInt#(24) index; } WordRead;
     struct { UInt#(24) index; } DWordRead;
-} MMIORWRequest deriving(Bits);
+} MMIORWRequest deriving(Bits,Eq);
 
 instance FShow#(MMIORWRequest);
     function Fmt fshow(MMIORWRequest r) = case (r) matches
@@ -82,33 +82,44 @@ function Reg#(t) toMReg(Reg#(Maybe#(t)) r) = interface Reg;
  *
  */
 
-module mkMMIOSplitter#(Server#(MMIORWRequest,MMIOResponse) mmCfg,Server#(MMIORWRequest,MMIOResponse) mmPSA)
+module mkMMIOSplitter#(Server#(MMIORWRequest,MMIOResponse) mmCfg,Server#(MMIORWRequest,MMIOResponse) mmPSA,Bool running)
     (ServerARU#(MMIOCommand,MMIOResponse));
 
-    Reg#(Maybe#(MMIOResponse)) mmResp <- mkDReg(tagged Invalid);
+    RWire#(MMIOResponse) mmResp <- mkRWire;
+    Reg#(Maybe#(MMIOResponse)) mmRespQ <- mkReg(tagged Invalid);
     let mmWaiting <- mkSetReset(False);
 
     (* mutually_exclusive="mmCfgResp,mmDataResp" *)
     rule mmCfgResp;
         let r <- mmCfg.response.get;
-        mmResp <= tagged Valid r;
+        $display($time," INFO: config response ",fshow(r));
+        mmResp.wset(r);
     endrule
 
     rule mmDataResp;
         let r <- mmPSA.response.get;
-        mmResp <= tagged Valid r;
+        $display($time," INFO: data response ",fshow(r));
+        mmResp.wset(r);
     endrule
 
-    (* fire_when_enabled *)
-    rule mmEndWait if (mmResp matches tagged Valid .r);
-        mmWaiting.rst;
+    rule showResp if (mmResp.wget matches tagged Valid .v);
+        $display($time," INFO: mmResp=",fshow(v));
     endrule
+
+    rule saveIt;
+        mmRespQ <= mmResp.wget;
+    endrule
+
+    rule showIt if (mmRespQ matches tagged Valid .v);
+        $display($time," INFO: mmRespQ=",fshow(v));
+    endrule
+
 
     interface Put request;
         method Action put(MMIOCommand cmd);
             $display($time," INFO: MMIO Command received ",fshow(cmd));
-            if (mmWaiting.startval)
-                $display($time," ERROR: MMIO command issued before previous command completed");
+//            if (mmWaiting.startval)
+//                $display($time," ERROR: MMIO command issued before previous command completed");
 
             MMIORWRequest req;
             if (cmd.mmrnw)
@@ -123,15 +134,20 @@ module mkMMIOSplitter#(Server#(MMIORWRequest,MMIOResponse) mmCfg,Server#(MMIORWR
 
             if (cmd.mmcfg)
                 mmCfg.request.put(req);
-            else
+            else if (running)
                 mmPSA.request.put(req);
+            else
+            begin
+                $display($time,"ERROR: MMIO problem-space access request while AFU not running");
+//                mmResp.wset(WriteAck);
+            end
 
             mmWaiting.set;
         endmethod
     endinterface
 
     interface ReadOnly response;
-        method MMIOResponse _read if (mmResp matches tagged Valid .v) = v;
+        method MMIOResponse _read if (mmRespQ matches tagged Valid .v) = v;
     endinterface
 endmodule
 

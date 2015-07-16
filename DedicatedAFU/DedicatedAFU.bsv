@@ -1,5 +1,6 @@
 package DedicatedAFU;
 
+import AFU::*;
 import StmtFSM::*;
 import PSLTypes::*;
 import Connectable::*;
@@ -7,21 +8,16 @@ import Convenience::*;
 import ClientServerFL::*;
 import DReg::*;
 
-//interface DedicatedAFU;
-//endinterface
-
-typedef union tagged {
-    void        Done;
-    UInt#(64)   Error;
-} AFUReturn deriving(Eq,FShow,Bits);
+import MMIO::*;
+import MMIOConfig::*;
 
 interface DedicatedAFUNoParity#(type wed_t,numeric type brlat);
     // holds the work element descriptor
-    interface SegmentedReg#(wed_t,2,512,6)              wedreg;
+    interface SegReg#(wed_t,2,512)                      wedreg;
 
     interface ClientU#(CacheCommand,CacheResponse)      command;
     interface AFUBufferInterface#(brlat)                buffer;
-    interface ServerARU#(MMIOCommand,MMIOResponse)      mmio;
+    interface Server#(MMIORWRequest,MMIOResponse)       mmio;
 
     method Action parity_error_jobcontrol;
     method Action parity_error_bufferread;
@@ -32,10 +28,12 @@ interface DedicatedAFUNoParity#(type wed_t,numeric type brlat);
     // Task control
     method Action                   start;
     method ActionValue#(AFUReturn)  retval;
-    method Bool                     done;
 
     // reset
     interface FSM                   rst;
+
+    // AFU Attributes (parity gen/check & latency)
+    method AFUAttributes attributes;
 endinterface
 
 typedef union tagged {
@@ -46,11 +44,11 @@ typedef union tagged {
     void        Running;
     void        Done;
     UInt#(64)   Error;
-} Status deriving(Eq,Bits,FShow);
+} DedicatedAFUStatus deriving(Eq,Bits,FShow);
 
-module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(wed_t,brlat) afu)(AFU#(brlat));
+module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(wed_t,brlat) afu)(AFUWithParity#(brlat));
 
-    Reg#(Status)                st <- mkReg(Unknown);
+    Reg#(DedicatedAFUStatus)                st <- mkReg(Unknown);
     Reg#(Bool)                  start_next <- mkDReg(False);
 
     Wire#(EAddress64)           jea_in <- mkWire;
@@ -58,19 +56,20 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
     Wire#(CacheCommand)         master_cmd <- mkWire;
 
     PulseWire pw_rst <- mkPulseWire;
-    PulseWire pw_done <- mkPulseWire;
+    PulseWire pwDone <- mkPulseWire;
     PulseWire pw_wed_done <- mkPulseWire;
 
     Stmt master = seq
         // Handle reset
         st <= Resetting;
+        $display($time," INFO: DedicatedAFU entered reset");
 
         afu.rst.start;
         await(afu.rst.done);
 
         // Ready, wait for EA to start
         st <= Ready;
-        pw_done.send;
+        pwDone.send;
 
         // Await jea (implicit condition on wire), read WED
         action
@@ -99,13 +98,18 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
             endcase
 
             // and we're done
-            pw_done.send;
+            pwDone.send;
         endaction
         
         $display($time,": INFO - DedicatedAFU completed");
     endseq;
 
     let masterfsm <- mkFSM(master);
+
+    let masterstart <- mkOnce(action masterfsm.start; endaction);
+    rule alwaysStart;
+        masterstart.start;
+    endrule
 
     rule startrst if (pw_rst);
         masterfsm.abort;
@@ -132,6 +136,24 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
             $display($time,": ERROR - DedicatedAFU received unexpected command from AFU while in status ",fshow(st));
             $display($time,"    details: ",fshow(afu.command.request));
         end
+    endrule
+
+    Server#(MMIORWRequest,MMIOResponse) mmCfg <- mkMMIOStaticConfig(
+        DedicatedProcessConfig {
+            num_ints: 2,
+            num_of_afu_crs: 0,
+            afu_cr_len: 0,
+            afu_cr_offset: 0,
+            psa_required: True,
+            afu_eb_len: 0,
+            afu_eb_offset: 0
+        });
+
+    ServerARU#(MMIOCommand,MMIOResponse) mmSplit <- mkMMIOSplitter(mmCfg,afu.mmio,st==Running);
+
+    rule showMMIOResp;
+        let o = mmSplit.response;
+        $display($time,"DedicatedAFU: received MMIO response ",fshow(o));
     endrule
 
     interface ClientU command;
@@ -166,7 +188,7 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
     endinterface
 
     interface AFUBufferInterfaceWithParity buffer;
-        interface ServerFL writedata;
+        interface ServerAFL writedata;
             interface Put request;  
                 method Action put(BufferReadRequestWithParity brp);
                     if (parity_maybe(parcheck,brp) matches tagged Valid .br)
@@ -180,11 +202,8 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
                 endmethod
             endinterface
 
-            interface Get response;
-                method ActionValue#(DWordWiseOddParity512) get;
-                    let o <- afu.buffer.writedata.response.get;
-                    return make_parity_struct(pargen,o);
-                endmethod
+            interface ReadOnly response;
+                method DWordWiseOddParity512 _read = make_parity_struct(pargen,afu.buffer.writedata.response);
             endinterface
         endinterface
 
@@ -193,7 +212,7 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
                 if (parity_maybe(parcheck,bwp) matches tagged Valid .bw)
                     case (st) matches
                         tagged ReadWED .*:                         // intercept buffer writes during WED read
-                            afu.wedreg.writeseg(bw.bwad,bw.bwdata);
+                            afu.wedreg.seg[bw.bwad] <= bw.bwdata;
                         Running:                            // pass through when running
                             afu.buffer.readdata.put(bw);                            
                         default:                            // should not receive requests here
@@ -212,13 +231,8 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
     interface ServerARU mmio;
         interface Put request;
             method Action put(MMIOCommandWithParity mmiop);
-                if (st != Running)
-                begin
-                    $display($time,": ERROR - DedicatedAFU received MMIO command while not running (state ",fshow(st),")");
-                    $display($time,"    details: ",fshow(mmiop));
-                end
-                else if (parity_maybe(parcheck,mmiop) matches tagged Valid .mmio)
-                    afu.mmio.request.put(mmio);
+                if (parity_maybe(parcheck,mmiop) matches tagged Valid .mmreq)
+                    mmSplit.request.put(mmreq);
                 else
                 begin
                     afu.parity_error_mmio;
@@ -229,7 +243,7 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
         endinterface
 
         interface ReadOnly response;
-            method DataWithParity#(MMIOResponse,OddParity) _read = make_parity_struct(pargen,afu.mmio.response);
+            method DataWithParity#(MMIOResponse,OddParity) _read = make_parity_struct(pargen,mmSplit.response);
         endinterface
     endinterface
 
@@ -247,27 +261,26 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
         endmethod
     endinterface
 
-    method Bool tbreq = False;
-    method Bool yield = False;
+    interface AFUStatus status;
+        method Bool tbreq = False;
+        method Bool jyield = False;
+        method Bool jrunning = case (st) matches
+            tagged Running: True;
+            tagged ReadWED .*: True;
+            default: False;
+        endcase;
 
-    method AFU_Status status = AFU_Status {
-        running:    case (st) matches
-                        tagged Running: True;
-                        tagged ReadWED .*: True;
-                        default: False;
-                    endcase,
-        done:       pw_done,
-        errcode:    case (st) matches
-                        tagged Error .e:    e;
-                        default:            0;
-                    endcase
-    };
+        method Bool jdone = pwDone;
+        method UInt#(64) jerror = case (st) matches
+            tagged Error .e:    e;
+            default:            0;
+        endcase;
+    endinterface
 
-    method AFU_Description description = AFU_Description {
-        brlat: fromInteger(valueOf(brlat)-1),
-        lroom: ?,
-        pargen: pargen,
-        parcheck: parcheck
+    method AFUAttributes attributes = AFUAttributes {
+        parcheck: afu.attributes.parcheck,
+        pargen: False,
+        brlat: afu.attributes.brlat
     };
 endmodule
 

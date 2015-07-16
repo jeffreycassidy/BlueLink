@@ -5,6 +5,7 @@ import MMIO::*;
 import Reserved::*;
 import Vector::*;
 import DefaultValue::*;
+import DReg::*;
 
 /***********************************************************************************************************************************
  * MMIO config-space definitions as per CAPI user guide v1.2
@@ -153,17 +154,32 @@ endinstance
 module mkMMIOStaticConfig#(config_t cfg)(Server#(MMIORWRequest,MMIOResponse)) provisos (AFUConfigVector#(config_t,len));
     Vector#(len,Bit#(64)) cfgReg = toConfigVector(cfg);
 
-    Wire#(MMIORWRequest) mmCfgReq <- mkWire;
+    RWire#(MMIORWRequest) mmCfgReq <- mkRWire;
+    RWire#(MMIOResponse)  ow <- mkRWire;
+    Reg#(Maybe#(MMIOResponse)) o <- mkDReg(tagged Invalid);
 
-    interface Put request = toPut(asIfc(mmCfgReq));
+    rule makeResponse if (mmCfgReq.wget matches tagged Valid .req);
+        $display($time," INFO: request received ",fshow(req));
+        MMIOResponse resp = case (req) matches
+            tagged DWordRead { index: .dwi }: tagged DWordData cfgReg[dwi];
+            tagged WordRead  { index: .wi  }: tagged WordData (wi%2==1 ? upper(cfgReg[wi>>1]) : lower(cfgReg[wi>>1]));
+            default: WriteAck;
+        endcase;
+        $display($time," INFO: Response should be ",fshow(resp));
+        o <= tagged Valid resp;
+    endrule
+
+    interface Put request;
+        method Action put(MMIORWRequest req);
+            $display($time," INFO: mkMMIOStaticConfig received request ",fshow(req));
+            mmCfgReq.wset(req);
+        endmethod
+    endinterface
 
     interface Get response;
-        method ActionValue#(MMIOResponse) get;
-            return (case (mmCfgReq) matches
-                tagged DWordRead { index: .dwi }: tagged DWordData cfgReg[dwi];
-                tagged WordRead  { index: .wi  }: tagged WordData (wi%2==1 ? upper(cfgReg[wi>>1]) : lower(cfgReg[wi>>1]));
-                default: WriteAck;
-            endcase);
+        method ActionValue#(MMIOResponse) get if (o matches tagged Valid .v);
+            $display($time,"INFO: response is ",fshow(v));
+            return v;
         endmethod
     endinterface
 endmodule

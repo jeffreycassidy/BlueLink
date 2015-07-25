@@ -4,7 +4,6 @@ import Reserved::*;
 import DefaultValue::*;
 import Vector::*;
 import PSLTypes::*;
-import DReg::*;
 import ClientServer::*;
 import GetPut::*;
 
@@ -12,30 +11,11 @@ export MMIO::*;
 export GetPut::*;
 export ClientServer::*;
 
-// TODO: These SetReset/ResetSet don't belong here
+import FIFO::*;
+import FIFOF::*;
 
-interface SetReset;
-    method Action set;
-    method Action rst;
-    method Bool _read;
-    method Bool startval;           // value at beginning of cycle
-endinterface
+import Assert::*;
 
-module mkSetReset#(Bool init)(SetReset);
-    Reg#(Bool) st[3] <- mkCReg(3,init);
-    method Action set = st[0]._write(True);
-    method Action rst = st[1]._write(False);
-    method Bool _read = st[2];
-    method Bool startval = st[0]._read;
-endmodule
-
-module mkResetSet#(Bool init)(SetReset);
-    Reg#(Bool) st[3] <- mkCReg(3,init);
-    method Action rst = st[0]._write(False);
-    method Action set = st[1]._write(True);
-    method Bool _read = st[2];
-    method Bool startval = st[0]._read;
-endmodule
 function Bit#(32) upper(Bit#(64) i) = truncate(pack(i>>32));
 function Bit#(32) lower(Bit#(64) i) = truncate(pack(i));
 
@@ -58,7 +38,6 @@ endinstance
 
 
 import StmtFSM::*;
-import DReg::*;
 
 // Reg interface with different semantics: _read only when valid contents, _write sets contents valid next cycle
 // Acts like a Wire#() but delays one cycle
@@ -85,42 +64,27 @@ function Reg#(t) toMReg(Reg#(Maybe#(t)) r) = interface Reg;
 module mkMMIOSplitter#(Server#(MMIORWRequest,MMIOResponse) mmCfg,Server#(MMIORWRequest,MMIOResponse) mmPSA,Bool running)
     (ServerARU#(MMIOCommand,MMIOResponse));
 
-    RWire#(MMIOResponse) mmResp <- mkRWire;
-    Reg#(Maybe#(MMIOResponse)) mmRespQ <- mkReg(tagged Invalid);
-    let mmWaiting <- mkSetReset(False);
+    FIFO#(MMIOResponse) mmResp <- mkFIFO1;
+
+    Wire#(MMIOResponse) o <- mkWire;
 
     (* mutually_exclusive="mmCfgResp,mmDataResp" *)
     rule mmCfgResp;
         let r <- mmCfg.response.get;
-        $display($time," INFO: config response ",fshow(r));
-        mmResp.wset(r);
+//        $display($time," INFO: config response ",fshow(r));
+        mmResp.enq(r);
     endrule
-
+    
     rule mmDataResp;
         let r <- mmPSA.response.get;
-        $display($time," INFO: data response ",fshow(r));
-        mmResp.wset(r);
+//        $display($time," INFO: data response ",fshow(r));
+        mmResp.enq(r);
     endrule
 
-    rule showResp if (mmResp.wget matches tagged Valid .v);
-        $display($time," INFO: mmResp=",fshow(v));
-    endrule
-
-    rule saveIt;
-        mmRespQ <= mmResp.wget;
-    endrule
-
-    rule showIt if (mmRespQ matches tagged Valid .v);
-        $display($time," INFO: mmRespQ=",fshow(v));
-    endrule
-
+    mkConnection(toGet(mmResp),toPut(asIfc(o)));
 
     interface Put request;
         method Action put(MMIOCommand cmd);
-            $display($time," INFO: MMIO Command received ",fshow(cmd));
-//            if (mmWaiting.startval)
-//                $display($time," ERROR: MMIO command issued before previous command completed");
-
             MMIORWRequest req;
             if (cmd.mmrnw)
                 req = cmd.mmdw ?
@@ -131,23 +95,18 @@ module mkMMIOSplitter#(Server#(MMIORWRequest,MMIOResponse) mmCfg,Server#(MMIORWR
                     tagged DWordWrite { index: cmd.mmad>>1, data: cmd.mmdata } :
                     tagged WordWrite  { index: cmd.mmad,    data: cmd.mmdata[31:0] };
 
-
             if (cmd.mmcfg)
                 mmCfg.request.put(req);
             else if (running)
                 mmPSA.request.put(req);
             else
-            begin
                 $display($time,"ERROR: MMIO problem-space access request while AFU not running");
-//                mmResp.wset(WriteAck);
-            end
 
-            mmWaiting.set;
         endmethod
     endinterface
 
     interface ReadOnly response;
-        method MMIOResponse _read if (mmRespQ matches tagged Valid .v) = v;
+        method MMIOResponse _read = o;
     endinterface
 endmodule
 

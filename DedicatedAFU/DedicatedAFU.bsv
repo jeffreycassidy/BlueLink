@@ -149,11 +149,17 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
             afu_eb_offset: 0
         });
 
-    ServerARU#(MMIOCommand,MMIOResponse) mmSplit <- mkMMIOSplitter(mmCfg,afu.mmio,st==Running);
+    Bool mmioAcceptPSA = case (st) matches
+        Running:            True;
+        tagged ReadWED .*:  True;
+        default:            False;
+    endcase;
+
+    ServerARU#(MMIOCommand,MMIOResponse) mmSplit <- mkMMIOSplitter(mmCfg,afu.mmio,mmioAcceptPSA);
 
     rule showMMIOResp;
         let o = mmSplit.response;
-        $display($time,"DedicatedAFU: received MMIO response ",fshow(o));
+//        $display($time,"DedicatedAFU: received MMIO response ",fshow(o));
     endrule
 
     interface ClientU command;

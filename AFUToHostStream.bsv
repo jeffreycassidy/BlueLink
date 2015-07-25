@@ -1,4 +1,4 @@
-package CAPIStream;
+package AFUToHostStream;
 
 import BuildVector::*;
 
@@ -11,50 +11,41 @@ import FIFO::*;
 import PAClib::*;
 import Vector::*;
 import StmtFSM::*;
+import MMIO::*;
+import Clocks::*;
+import DedicatedAFU::*;
+import AFUHardware::*;
+import Reserved::*;
+import BDPIPipe::*;
 
 import TagManager::*;
 
 import ReadBuf::*;
 
+typedef struct { UInt#(64) addr; } EAddress64LE deriving(Eq);
 
-/** Testbench to stream data from the host, using multiple parallel in-flight tags.
- * 
- * Out-of-order completions are handled by the read buffer.
- *
- * For each tag:
- *
- *  When available, acquires a tag from the TagManager
- *  Marks tag as incomplete and issues read request using the tag
- *  Enqueues the tag index in the requestTagFIFO (requests are to ordered addresses, so tags in the FIFO are ordered too)
- *  On read completion, mark tag complete
- *
- * Continuously check whether the oldest request has been serviced yet. If so, free up the buffer slot and pass the data out.
- *
- * Some requests may take a very long time to complete because of page faults etc. Since this is a streaming interface, we'll just
- * have to wait for those to complete because there's no way to signal out-of-order results to the downstream logic.
- *
- * TODO: Possible performance improvement (?) if we decouple the data buffer index from the tag index. Currently the same logic
- *          is used to allocate tags and buffer slots.
- *
- *          Rationale: if last tag takes a very long time to complete, we stop issuing new requests even though previous tags
- *                      have completed. They are blocked by the buffer not draining.
- *
- */
+function Bit#(n) endianSwap(Bit#(n) i) provisos (Mul#(nbytes,8,n),Div#(n,8,nbytes),Log#(nbytes,k));
+    Vector#(nbytes,Bit#(8)) t = toChunks(i);
+    return pack(reverse(t));
+endfunction
 
-interface HostToAFUStream;
-    // Start the stream
-    method Action   start(UInt#(64) ea,UInt#(64) size);
-    method Bool     done;
+instance Bits#(EAddress64LE,64);
+    function Bit#(64) pack(EAddress64LE i) = endianSwap(pack(i.addr));
+    function EAddress64LE unpack(Bit#(64) b) = EAddress64LE { addr: unpack(endianSwap(b)) };
+endinstance
 
-    // PSL interface
-    interface Client#(CacheCommand,CacheResponse)       cmd;
-    interface Put#(BufferWrite)                         bw;
+typedef struct {
+    EAddress64LE        eaDst;
+    EAddress64LE        size;
 
-    // PipeOut with data
-    interface PipeOut#(Bit#(1024)) istream;
-endinterface
+    ReservedZero#(128)  padA;
+
+    ReservedZero#(256)  padB;
 
 
+
+    ReservedZero#(512)  padC;
+} AFUToHostWED deriving(Bits,Eq);
 
 interface AFUToHostStream;
     // start the stream
@@ -71,113 +62,6 @@ endinterface
 
 
 function Bit#(n) padpack(data_t i) provisos (Bits#(data_t,ni),Add#(ni,__some,n)) = extend(pack(i));
-
-/** Provides a PipeOut#(Bit#(1024)) stream from the host memory.
- *
- * The user starts the transfer by providing an address and a size, then is able to pull (size) bytes from the host.
- *
- * Currently requires cache-aligned ea and size. 
- */
-
-module mkHostToAFUStream(HostToAFUStream)
-    provisos (
-        NumAlias#(nt,4));
-
-    Integer stepBytes=128;
-    Integer alignBytes=stepBytes;
-
-    // Manage the request tags
-    let mgr <- mkTagManager(Vector#(nt,RequestTag)'(genWith(fromInteger)),False);
-
-    // keep track of which tags were requested in which order, and their completion status
-    FIFO#(RequestTag) requestTagFIFO <- mkSizedFIFO(valueOf(nt));
-    Vector#(nt,Reg#(Bool)) completed <- replicateM(mkReg(False));
-
-    Reg#(UInt#(64)) eaStart   <- mkReg(0);
-    Reg#(UInt#(64)) ea        <- mkReg(0);
-    Reg#(UInt#(64)) eaEnd     <- mkReg(0);
-
-    let rbuf <- mkAFUReadBuf(4);
-
-    // Output data
-    RWire#(Bit#(1024)) oData <- mkRWire;
-
-    rule readyToDrain if (completed[requestTagFIFO.first]);
-        let o <- rbuf.lookup(requestTagFIFO.first);
-        oData.wset(o);
-    endrule
-
-
-    PulseWire pwStart <- mkPulseWire;
-
-    method Action start(UInt#(64) ea0,UInt#(64) size);
-        eaStart <= ea0;
-        ea <= ea0;
-        eaEnd <= ea0+size;
-
-        pwStart.send;
-
-        dynamicAssert(ea0 % fromInteger(alignBytes) == 0,    "Effective address is not properly aligned");
-        dynamicAssert(size % fromInteger(alignBytes) == 0,  "Transfer size is not properly aligned");
-    endmethod
-
-    method Bool done = ea==eaEnd && !isValid(oData.wget);
-
-    interface Client cmd;
-        interface Get request;
-            method ActionValue#(CacheCommand) get if (ea != eaEnd && !pwStart);
-                let t <- mgr.acquire;
-                completed[t] <= False;
-                requestTagFIFO.enq(t);
-                ea <= ea + fromInteger(stepBytes);
-                return CacheCommand { com: Read_cl_s, ctag: t, cabt: Strict, cea: EAddress64 { addr: ea }, cch: 0, csize: fromInteger(stepBytes) };
-            endmethod
-        endinterface
-
-        interface Put response;
-            method Action put(CacheResponse r);
-                case (r.response) matches
-                    Done:
-                        action
-                            $display($time," Read completion for tag %X",r.rtag);
-                            completed[r.rtag] <= True;
-
-                            mgr.free(r.rtag);
-
-                            // TODO: Change this so we can restart cleanly?
-                            dynamicAssert(!completed[r.rtag],"Completion received for unused tag");
-                        endaction
-                        
-                    default:
-                        action
-                            $display($time,"ERROR: Invalid command code received ",fshow(r));
-                            dynamicAssert(False,"Invalid command code received");
-                        endaction
-                endcase
-                    // Aerror
-                    // Derror
-                    // Nlock
-                    // Nres
-                    // Flushed
-                    // Fault
-                    // Failed
-                    // Credit
-                    // Paged
-                    // Invalid
-            endmethod
-
-        endinterface
-    endinterface
-
-    interface Put bw = rbuf.pslin;
-
-    interface PipeOut istream;
-        method Action deq if (isValid(oData.wget)) = requestTagFIFO.deq;
-        method Bit#(1024) first if (oData.wget matches tagged Valid .v) = v;
-        method Bool notEmpty = isValid(oData.wget);
-    endinterface
-endmodule
-
 
 
 /** Sinks a stream to host memory.
@@ -237,8 +121,14 @@ module mkAFUToHostStream(AFUToHostStream)
                             mgr.free(r.rtag);
 
                             // TODO: Change this so we can restart cleanly?
-                            dynamicAssert(!completed[r.rtag],"Completion received for unused tag");
+//                            dynamicAssert(!completed[r.rtag],"Completion received for unused tag");
                         endaction
+					Paged:
+					action
+						completed[r.rtag] <= True;
+						mgr.free(r.rtag);
+						$display($time," WARNING: PAGED response ignored for tag %X",r.rtag);
+					endaction
                         
                     default:
                         action
@@ -274,287 +164,179 @@ module mkAFUToHostStream(AFUToHostStream)
             wbuf.write(t,i);
 
             // enq command
-            let cmd = CacheCommand { com: Write_mi, ctag: t, cabt: Strict, cea: EAddress64 { addr: ea }, cch: 0, csize: fromInteger(stepBytes) };
+            let cmd = CacheCommand { com: Write_mi, ctag: t, cabt: Abort, cea: EAddress64 { addr: ea }, cch: 0, csize: fromInteger(stepBytes) };
             oCmd.enq(cmd);
             ea <= ea + fromInteger(stepBytes);
         endmethod
     endinterface
 endmodule
 
-
-function Action putCompletion(Put#(CacheResponse) ifc,RequestTag t) = action
-    let resp = CacheResponse { rtag: t, response: Done, rcredits: 0, rcachestate: 0, rcachepos: 0 };
-    ifc.put(resp);
-    $display($time," PSL=>AFU ",fshow(resp));
-endaction;
-
-function Action putBufWrite(Put#(BufferWrite) ifc,RequestTag t,UInt#(6) seg,Bit#(512) data) = action
-    let bw = BufferWrite { bwtag: t, bwad: seg, bwdata: data };
-    $display($time," PSL=>AFU ",fshow(bw));
-    ifc.put(bw);
-endaction;
-
-function Action putBufReadReq(Put#(BufferReadRequest) ifc,RequestTag t,UInt#(6) seg) = action
-    let br = BufferReadRequest { brtag: t, brad: seg };
-    $display($time," PSL=>AFU ",fshow(br));
-    ifc.put(br);
-endaction;
-
-module mkTB_OStream();
-
-    let dut <- mkAFUToHostStream;
-
-    function sendBufReadReq = putBufReadReq(dut.br.request);
-    function sendCompletion = putCompletion(dut.cmd.response);
-
-    // Put the AFU command on a wire for all to see
-    Wire#(CacheCommand) cmd <- mkWire;
-
-    rule getCommand;
-        let c <- dut.cmd.request.get;
-        $display($time," AFU=>PSL ",fshow(c));
-        cmd <= c;
-    endrule
+module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUToHostWED,2));
+    //// WED reg
+    SegReg#(AFUToHostWED,2,512) wed <- mkSegReg(unpack(?));
 
 
-    for(Integer i=0;i<4;i=i+1)
-    begin
-        Stmt writeStmt = seq
-            repeat(30) noAction;
 
-            // TODO: Randomize response time
-            sendBufReadReq(fromInteger(i),0);
-            noAction;
-            sendBufReadReq(fromInteger(i),1);
-            sendCompletion(fromInteger(i));
-        endseq;
+    //// Reset controller
 
-        let writeFSM <- mkFSM(writeStmt);
-
-        rule handleWriteCmd if (cmd.com == Write_mi && cmd.ctag == fromInteger(i));
-            dynamicAssert(writeFSM.done,"ERROR: Tag already in flight");
-            writeFSM.start;
-        endrule
-    end
-
-    rule sinkReadResponse;
-        let brr = dut.br.response;
-        $display($time," Response from memory: %0128X",brr);
-    endrule
-
-
-    // generate stimulus using counter
-    Reg#(UInt#(32)) oCtr <- mkReg(0);
-    Wire#(Vector#(1,Bit#(64))) w <- mkWire;
-
-    function Action sendpiece = action
-        let t = { 32'hf00fffff, pack(oCtr) };
-        $display($time," Putting %16X",t);
-        oCtr <= oCtr + 1;
-        w <= replicate(t);
-    endaction;
-
-    // take 64b stimulus, unfunnel, and sink into output stream
-    // use taps to show the 64b values and 1kb values on their way through
-    function Action show64b(Vector#(1,Bit#(64)) i)  = $display($time,": 64b value %016X",i[0]);
-    function Action show1k (Vector#(16,Bit#(64)) i)           = $display($time,": 1024b value %0256X",pack(i));
-
-    let o64 <- mkSource_from_constant(w);
-    let t64 <- mkTap(show64b,o64);
-    PipeOut#(Vector#(16,Bit#(64))) o1k <- mkUnfunnel(False,t64);
-    let t1k <- mkTap(show1k,o1k);
-    let t1kb <- mkFn_to_Pipe(pack,t1k);
-    mkSink_to_fa(dut.ostream.put,t1kb);
-
-    Stmt stim = seq
+    Stmt rststmt = seq
         noAction;
+        $display($time," INFO: AFU Reset FSM completed");
+    endseq;
+    
+    FSM rstfsm <- mkFSM(rststmt);
 
-        // read 8 cache lines
+
+
+
+	//// Stream consumer: fix endianness, unfunnel, reverse elements, and pack into 1024b vector
+	PipeOut#(Vector#(1,Bit#(32))) iEndian <- mkFn_to_Pipe(compose(unpack,compose(pack,endianSwap)),pi);
+    PipeOut#(Vector#(32,Bit#(32))) iUnFun <- mkUnfunnel(False,iEndian);
+
+    PipeOut#(Bit#(1024)) stream <- mkFn_to_Pipe(compose(pack,reverse),iUnFun);
+
+
+
+    //// Host -> AFU stream controller
+
+    let streamctrl <- mkAFUToHostStream;
+
+	mkSink_to_fa(streamctrl.ostream.put,stream);
+
+    FIFO#(void) ret <- mkFIFO1;
+
+    Stmt ctlstmt = seq
         action
-            dut.start(64'h10080,64'h00400);
+            $display($time," INFO: AFU Master FSM starting");
+            $display($time,"      Size:          %016X",wed.entire.size.addr);
+            $display($time,"      Start address: %016X",wed.entire.eaDst.addr);
+            streamctrl.start(wed.entire.eaDst.addr,wed.entire.size.addr);
         endaction
-
-
-        sendpiece;
-        sendpiece;
-        repeat(10) noAction;
-        sendpiece;
-        noAction;
-        sendpiece;
-        noAction;
-        noAction;
-        sendpiece;
-        sendpiece;
-        noAction;
-        noAction;
-        noAction;
-        sendpiece;
-        sendpiece;
-        sendpiece;
-        noAction;
-        sendpiece;
-        noAction;
-        sendpiece;
-        noAction;
-        sendpiece;
-        noAction;
-        sendpiece;
-        noAction;
-        sendpiece;
-        noAction;
-        noAction;
-        noAction;
-        noAction;
-        noAction;
-        sendpiece;
-        sendpiece;
-        sendpiece;
-        sendpiece;
-        sendpiece;
-
-        while(oCtr < 128)
-            sendpiece;
-
-        $display($time," INFO: Stimulus stream finished");
-
-        await(dut.done);
-        $display($time," INFO: DUT is finished transferring");
-
-        repeat(20) noAction;
+        await(streamctrl.done);
+        $display($time," INFO: AFU Master FSM copy complete");
+        ret.enq(?);
     endseq;
 
-    mkAutoFSM(stim);
+    let ctlfsm <- mkFSMWithPred(ctlstmt,rstfsm.done);
+
+
+
+    //// Command interface checking
+
+    ClientU#(CacheCommand,CacheResponse) cmd <- mkClientUFromClient(streamctrl.cmd);
+
+	Wire#(Bit#(512)) respW <- mkWire;
+	
+	rule getBufferResponse;
+		respW <= streamctrl.br.response;
+	endrule
+
+
+    interface SegmentedReg wedreg = wed;
+
+    interface ClientU command = cmd;
+
+    interface AFUBufferInterface buffer;
+//        interface Put readdata = streamctrl.bw;
+        interface ServerAFL writedata;
+			interface Put request;
+				method Action put(BufferReadRequest req) = streamctrl.br.request.put(req);
+			endinterface
+			interface ReadOnly response;
+				method Bit#(512) _read = respW;
+			endinterface
+		endinterface
+    endinterface
+
+// no MMIO support
+    interface Server mmio;
+        interface Get response;
+            method ActionValue#(MMIOResponse) get if (False) = actionvalue return ?; endactionvalue;
+        endinterface
+
+        interface Put request;
+            method Action put (MMIORWRequest i) = noAction;
+        endinterface
+
+    endinterface
+
+    method Action parity_error_jobcontrol   = noAction;
+    method Action parity_error_bufferread   = noAction;
+    method Action parity_error_bufferwrite  = noAction;
+    method Action parity_error_mmio         = noAction;
+    method Action parity_error_response     = noAction;
+
+    method Action start if (rstfsm.done);
+        ctlfsm.start;
+    endmethod
+
+    method ActionValue#(AFUReturn) retval;
+        ret.deq;
+        return Done;
+    endmethod
+
+    interface FSM rst = rstfsm;
+
+    method AFUAttributes attributes = AFUAttributes {
+        brlat: 2,
+        pargen: False,
+        parcheck: False };
+
 endmodule
 
-
-module mkTB_StreamManager();
-
-    let dut <- mkHostToAFUStream;
-
-    function sendCompletion = putCompletion(dut.cmd.response);
-    function sendBufWrite   = putBufWrite(dut.bw);
-
-//    function Action sendCompletion(RequestTag t) = action
-//        let resp = CacheResponse { rtag: t, response: Done, rcredits: 0, rcachestate: 0, rcachepos: 0 };
-//        dut.cmd.response.put(resp);
-//        $display($time," PSL=>AFU ",fshow(resp));
-//    endaction;
-//
-//    function Action sendBufWrite(RequestTag t,UInt#(6) seg,Bit#(512) data) = action
-//        let bw = BufferWrite { bwtag: t, bwad: seg, bwdata: data };
-//        $display($time," PSL=>AFU ",fshow(bw));
-//        dut.bw.put(bw);
-//    endaction;
+import FIFOF::*;
 
 
-    // Put the AFU command on a wire for all to see
-    Wire#(CacheCommand) cmd <- mkWire;
+(* clock_prefix="ha_pclock", no_default_reset *)
 
-    rule getCommand;
-        let c <- dut.cmd.request.get;
-        $display($time," AFU=>PSL ",fshow(c));
-        cmd <= c;
+module mkSyn_AFUToHost(AFUHardware#(2));
+    //// Reset generation
+
+    let por <- mkPOR(1,reset_by noReset);
+    let clk <- exposeCurrentClock;
+    MakeResetIfc rstctrl <- mkResetSync(0,False,clk,reset_by noReset);
+
+	//// RNG for write data
+//	let rng <- mkBDPIIStream(bsv_makeMersenneTwister19937,reset_by rstctrl.new_rst);
+//	PipeOut#(Bit#(32)) iPipe <- mkSource_from_fav(rng.next.get,reset_by rstctrl.new_rst);
+
+	Reg#(UInt#(32)) ctr <- mkReg(0,reset_by rstctrl.new_rst);
+	Reg#(UInt#(32)) stimctr <- mkReg(0,reset_by rstctrl.new_rst);
+	FIFOF#(Bit#(32)) stimFifo <- mkFIFOF(reset_by rstctrl.new_rst);
+
+	PipeOut#(Bit#(32)) iPipe =	f_FIFOF_to_PipeOut(stimFifo);
+
+	Stmt stim = seq
+		repeat(512) action
+			stimFifo.enq(pack(stimctr));
+			stimctr <= stimctr+1;
+		endaction
+
+		repeat(10000) noAction;
+
+	endseq;
+
+	mkAutoFSM(stim,reset_by rstctrl.new_rst);
+
+
+
+	function Action tapDisplay(Bit#(32) i) = action
+		$display($time," Input %d: %08X",ctr,i);
+		ctr <= ctr+1;
+	endaction;
+
+	PipeOut#(Bit#(32)) iPipeT <- mkTap(tapDisplay,iPipe);
+
+
+    let dut <- mkAFU_AFUToHostStream(iPipeT,reset_by rstctrl.new_rst);
+    let wrap <- mkDedicatedAFUNoParity(False,False,dut,reset_by rstctrl.new_rst);
+
+    rule doPOR if (por.isAsserted);
+        rstctrl.assertReset;
     endrule
 
-
-    // sends a reply after delay d, with delay wd between buf writes
-    function Stmt doRead(RequestTag t,Nat delay,Nat wd,Bit#(1024) data) = seq
-        // wait for read command
-        await(cmd.ctag == t && cmd.com == Read_cl_s);
-        repeat(delay) noAction;
-
-        par
-            sendBufWrite(t,0,data[1023:512]);
-            repeat(wd) noAction;
-        endpar
-
-        par
-            sendBufWrite(t,1,data[511:0]);
-            sendCompletion(t);
-        endpar
-    endseq;
-
-    // creates a cacheline where each 64b word has the same 32b prefix and the lower 32b word is a counter
-
-    function Bit#(1024) makePrefixedSequence(Bit#(32) pfx);
-        Vector#(16,Bit#(64)) v;
-        for(Integer i=0;i<16;i=i+1)
-            v[i] = { pfx, pack(fromInteger(i)) };
-        return pack(v);
-    endfunction
-
-    // PSL stimulus
-    Stmt psl = seq
-        par
-            seq
-                doRead(0,14,1,makePrefixedSequence(32'h00beef00));
-                doRead(0,14,2,makePrefixedSequence(32'h00beef01));
-                doRead(0,14,1,makePrefixedSequence(32'h00beef02));
-                doRead(0,14,2,makePrefixedSequence(32'h00beef03));
-            endseq
-
-            seq
-                doRead(1,14,4,makePrefixedSequence(32'hdeadb00f));
-                doRead(1,14,4,makePrefixedSequence(32'hdeadb00f));
-//                doRead(1,4,1,makePrefixedSequence(32'hdeadb11f));
-            endseq
-
-            seq
-                doRead(2,14,6,makePrefixedSequence(32'hdeadb11f));
-//                doRead(2,4,1,makePrefixedSequence(32'hdeadb11f));
-            endseq
-
-            seq
-                doRead(3,14,2,makePrefixedSequence(32'hbaadc0de));
-//                doRead(3,4,1,makePrefixedSequence(32'hbaadc0de));
-            endseq
-        endpar
-
-        $display($time," INFO: PSL Stimulus complete");
-
-
-
-    endseq;
-
-    let psltb <- mkFSM(psl);
-
-    Reg#(UInt#(32)) oCtr <- mkReg(0);
-
-
-    Stmt stim = seq
-        noAction;
-
-        // read 8 cache lines
-        action
-            dut.start(64'h10080,64'h00480);
-            psltb.start;
-        endaction
-
-        action
-            await(dut.done);
-            $display($time,": DUT reports completed");
-        endaction
-
-        repeat(1000) noAction;
-
-        await(psltb.done);
-
-        dynamicAssert(oCtr == 8*16 ,"Invalid output count");
-    endseq;
-
-    mkAutoFSM(stim);
-
-    // sink output to stdout and count number of outputs
-    function Action show(Bit#(64) x) = action
-        $display($time,"  Stream output: %16X",x);
-        oCtr <= oCtr + 1;
-    endaction;
-
-    PipeOut#(Vector#(16,Bit#(64))) p <- mkFn_to_Pipe(toChunks,dut.istream);
-    PipeOut#(Vector#(1,Bit#(64))) f <- mkFunnel(p);
-    let u <- mkFn_to_Pipe(compose(unpack,flip(select)(0)),f);
-    mkSink_to_fa(show,u);
+    AFUHardware#(2) hw <- mkCAPIHardwareWrapper(wrap,reset_by rstctrl.new_rst);
+    return hw;
 endmodule
-
 
 endpackage

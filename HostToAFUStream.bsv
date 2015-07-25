@@ -102,7 +102,7 @@ module mkHostToAFUStream(HostToAFUStream)
         dynamicAssert(size % fromInteger(alignBytes) == 0,  "Transfer size is not properly aligned");
     endmethod
 
-    method Bool done = ea==eaEnd && !isValid(oData.wget);
+    method Bool done = ea==eaEnd && !isValid(oData.wget) && all( id , read(completed));
 
     interface Client cmd;
         interface Get request;
@@ -111,7 +111,7 @@ module mkHostToAFUStream(HostToAFUStream)
                 completed[t] <= False;
                 requestTagFIFO.enq(t);
                 ea <= ea + fromInteger(stepBytes);
-                return CacheCommand { com: Read_cl_s, ctag: t, cabt: Strict, cea: EAddress64 { addr: ea }, cch: 0, csize: fromInteger(stepBytes) };
+                return CacheCommand { com: Read_cl_s, ctag: t, cabt: Abort, cea: EAddress64 { addr: ea }, cch: 0, csize: fromInteger(stepBytes) };
             endmethod
         endinterface
 
@@ -120,13 +120,13 @@ module mkHostToAFUStream(HostToAFUStream)
                 case (r.response) matches
                     Done:
                         action
-                            $display($time," Read completion for tag %X",r.rtag);
+//                            $display($time," Read completion for tag %X",r.rtag);
                             completed[r.rtag] <= True;
 
                             mgr.free(r.rtag);
 
                             // TODO: Change this so we can restart cleanly?
-                            dynamicAssert(!completed[r.rtag],"Completion received for unused tag");
+                            //dynamicAssert(!completed[r.rtag],"Completion received for unused tag");
                         endaction
                         
                     default:

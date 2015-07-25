@@ -51,6 +51,11 @@ module mkTagManager#(Vector#(nTags,tag_t) tags,Bool bypass)(TagManager#(tag_t))
             avail[i] <= (avail[i] || pwClr[i]) && !pwGt[i];
     endrule
 
+    for(Integer i=0;i<valueOf(nTags);i=i+1)
+        rule showGrant if (pwGt[i]);
+            $display($time," INFO: Granted tag %d",i);
+        endrule
+
     // acquire sequences after free/clear if bypass is enabled
 
     method Action free(tag_t t);
@@ -60,7 +65,15 @@ module mkTagManager#(Vector#(nTags,tag_t) tags,Bool bypass)(TagManager#(tag_t))
             if (tags[i] == t)
             begin
                 pwClr[i].send;
-                dynamicAssert(!avail[i],"Attempting to free an unused tag");
+ //               $display($time," INFO: Freed tag %d",i);
+//                if (avail[i])
+//                begin
+////                    $write("Trying to free tag %d, tag status: ",i);
+//                    for(Integer j=0;j<valueOf(nTags);j=j+1)
+//                        $write("%d ",(avail[j] ? 1 : 0));
+//                    $display;
+//                end
+//                dynamicAssert(!avail[i],"Attempting to free an unused tag");
             end
     endmethod
 
@@ -71,7 +84,7 @@ module mkTagManager#(Vector#(nTags,tag_t) tags,Bool bypass)(TagManager#(tag_t))
         while (i < valueOf(nTags) && !availNext[i])
             i=i+1;
 
-        dynamicAssert(i < valueOf(nTags),"Should never get here");
+        dynamicAssert(i < valueOf(nTags),"availNext indicates tag available but loop ran off the end without finding a free tag");
         pwGt[i].send;
         return tags[i];
     endmethod

@@ -99,6 +99,10 @@ proc simcapi { tbname } {
 
     add wave -group Buffer -group Read -group Response -noupdate -radix hexadecimal ah_brpar
 
+#       Read testbench
+    add wave -group Buffer -group Read -group Testbench -noupdate -radix hexadecimal brdata_delay
+    add wave -group Buffer -group Read -group Testbench -noupdate -radix hexadecimal brvalid_delay
+
 #   Write
     add wave -group Buffer -group Write -noupdate ha_bwvalid
     add wave -group Buffer -group Write -noupdate -radix unsigned ha_bwtag
@@ -120,7 +124,7 @@ proc simcapi { tbname } {
 
 #    force -drive ha_pclock 1'b0, 1'b1 2 -repeat 4
     onfinish stop
-    run 10us
+    run 20us
 }
 
 proc rs {} { source testbuf.tcl }

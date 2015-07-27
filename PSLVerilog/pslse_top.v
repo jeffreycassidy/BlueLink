@@ -567,7 +567,7 @@ module top (
     .ah_jyield(ah_jyield),
     .ah_tbreq(ah_tbreq),
     .ah_paren(ah_paren),
-    .ha_pclock(!ha_pclock)
+    .ha_pclock(ha_pclock)
   );
 
 endmodule

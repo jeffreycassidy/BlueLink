@@ -97,11 +97,14 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
                 default:            $display($time,": ERROR - DedicatedAFU received invalid result code ",fshow(res));
             endcase
 
-            // and we're done
-            pwDone.send;
         endaction
-        
-        $display($time,": INFO - DedicatedAFU completed");
+
+        // and we're done
+		action
+	        pwDone.send;
+    	    $display($time,": INFO - DedicatedAFU completed");
+		endaction
+
     endseq;
 
     let masterfsm <- mkFSM(master);

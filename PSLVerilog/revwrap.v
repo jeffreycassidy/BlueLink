@@ -1,8 +1,9 @@
 `ifndef DUTMODULETYPE
-`error "DUTMODULETYPE must be defined"
+//`error "DUTMODULETYPE must be defined"
+`define DUTMODULETYPE mkSyn_AFUToHost
 `endif
 
-module revwrap (
+module afu (
 	input  [   0:   5]  ha_brad,
 	output ah_cvalid,
 	input  [   0:   7]  ha_brtag,
@@ -103,7 +104,8 @@ module revwrap (
 
 // Insert code here
 
-  `DUTMODULETYPE afurev (
+  `DUTMODULETYPE afurev(
+    .RST_N(rst_n_i),
 	.ha_brad(ha_brad_rev),
 	.ah_cvalid(ah_cvalid_i),
 	.ha_brtag(ha_brtag_rev),
@@ -160,6 +162,16 @@ module revwrap (
 	.ah_jerror(ah_jerror_rev),
 	.ah_brlat(ah_brlat_rev)
 );
+
+  // power-on reset generation
+  reg rst_d = 1'b0;
+
+  always@(posedge ha_pclock)
+  begin
+    rst_d <= 1'b1;
+  end
+
+  assign rst_n_i = rst_d;
 
 
   assign ha_brad_rev = ha_brad;

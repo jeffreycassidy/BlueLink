@@ -32,4 +32,12 @@ host2afu: host2afu.cpp *.hpp
 	g++ -g -std=c++11 -fPIC -I/home/jcassidy/src/CAPI/pslse/pslse -L/home/jcassidy/src/CAPI/pslse/pslse -I/home/jcassidy/src -o $@ $< -lcxl -lpthread
 
 afu2host: afu2host.cpp *.hpp
-	g++ -g -std=c++11 -fPIC -I/home/jcassidy/src/CAPI/pslse/pslse -L/home/jcassidy/src/CAPI/pslse/pslse -I/home/jcassidy/src -o $@ $< -lcxl -lpthread
+	g++ -g -std=c++11 -m64 -fPIC -L$(CAPI_CXL_DIR) -I$(CAPI_CXL_DIR) -I$(BLUELINK) -I/home/jcassidy/src -o $@ $< -lcxl -lpthread
+
+ubuntu-%: 
+	rsync -crizt --progress Host/AFU.hpp Host/WED.hpp stac:/home/ubuntu/jcassidy/BlueLink/Host
+	rsync -crizt --progress Makefile *.?pp stac:/home/ubuntu/jcassidy/stream
+	ssh stac "export LANG=C BLUELINK=/home/ubuntu/jcassidy CAPI_CXL_DIR=/home/ubuntu/devkit/pslse/libcxl; cd jcassidy/stream; make $*"	
+
+Test_BitEnum: Test_BitEnum.cpp
+	g++ -g -O3 -std=c++11 -fPIC -o $@ $^

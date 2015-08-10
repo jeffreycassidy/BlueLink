@@ -1,4 +1,4 @@
-set CAPI_SL /home/parallels/src/CAPI/pslse/pslse/afu_driver/src/afu_driver.sl
+set CAPI_SL /home/parallels/src/CAPI/pslse/afu_driver/src/veriuser.sl
 
 set CAPI_ROOT /home/parallels/src/BlueLink/PSLVerilog/
 
@@ -12,12 +12,10 @@ proc com {} {
 	vlog -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+BSV_ASSIGNMENT_DELAY=\#1 mkTB_OStream.v
 
 
-	vlog -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+BSV_ASSIGNMENT_DELAY=\#1 PSLVerilog/mkPOR.v
 	vlog -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+BSV_ASSIGNMENT_DELAY=\#1 mkSyn_AFUToHost.v
 	vlog -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+BSV_ASSIGNMENT_DELAY=\#1 mkSyn_HostToAFU.v
 
 
-	vlog -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+BSV_ASSIGNMENT_DELAY=\#1 $CAPI_ROOT/psl_sim.v $CAPI_ROOT/psl_sim_wrapper.v
     vlog -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+BSV_ASSIGNMENT_DELAY=\#1 /usr/local/Bluespec/lib/Verilog/FIFO2.v
 	vlog -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+BSV_ASSIGNMENT_DELAY=\#1 /usr/local/Bluespec/lib/Verilog/FIFO1.v
 	vlog -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+BSV_ASSIGNMENT_DELAY=\#1 /usr/local/Bluespec/lib/Verilog/FIFO10.v
@@ -41,30 +39,57 @@ proc simcapi { tbname } {
 
 # Compile psl sim toplevel with the DUT name inserted
 
-	vlog -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+BSV_ASSIGNMENT_DELAY=\#1 +define+DUTMODULETYPE=$tbname $CAPI_ROOT/revwrap.v
-    vlog -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+BSV_ASSIGNMENT_DELAY=\#1 +define+DUTMODULETYPE=$tbname $CAPI_ROOT/pslse_top.v
+	vlog -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+HA_ASSIGNMENT_DELAY=\#1 +define+BSV_ASSIGNMENT_DELAY=\#1 +define+DUTMODULETYPE=$tbname $CAPI_ROOT/top.v
+    vlog -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+HA_ASSIGNMENT_DELAY=\#1 +define+BSV_ASSIGNMENT_DELAY=\#1 +define+DUTMODULETYPE=$tbname $CAPI_ROOT/revwrap.v
 
 	vsim -t 1ns -L altera_mf_ver -pli $CAPI_SL -pli libBDPIPipe32_VPI.so top
 
 # note clock is inverted wrt /top to show assignment delays
-	add wave -noupdate /top/a0/ha_pclock
-	add wave -group Control -noupdate -divider "Reset generation"
-	add wave -group Control -noupdate {top/a0/afurev/rstctrl$OUT_RST}
+	add wave -noupdate /top/a0/afurev/ha_pclock
+#	add wave -group Control -noupdate -divider "Reset generation"
+	add wave -group Control -noupdate top/a0/afurev/RST_N
 
 	add wave -group Control -noupdate -divider "AFU Control"
 	add wave -group Control -noupdate ha_jval
 	add wave -group Control -noupdate -radix hexadecimal ha_jcom
+    add wave -group Control -noupdate ha_jcompar
 	add wave -group Control -noupdate -radix hexadecimal ha_jea
+    add wave -group Control -noupdate ha_jeapar
 
-	add wave -group Status -noupdate -divider "AFU Status"
 	add wave -group Status -noupdate ah_jrunning
 	add wave -group Status -noupdate ah_jdone
+	add wave -group Status -noupdate ah_jcack
+	add wave -group Status -noupdate ah_tbreq
+	add wave -group Status -noupdate ah_paren
+	add wave -group Status -noupdate ah_jyield
 	add wave -group Status -noupdate -radix hexadecimal ah_jerror
+
+    add wave -group Command -group Request ah_cvalid
+    add wave -group Command -group Request -radix hexadecimal ah_com
+    add wave -group Command -group Request ah_compar
+    add wave -group Command -group Request -radix hexadecimal ah_ctag
+    add wave -group Command -group Request ah_ctagpar
+    add wave -group Command -group Request -radix hexadecimal ah_cabt
+    add wave -group Command -group Request -radix hexadecimal ah_csize
+    add wave -group Command -group Request -radix hexadecimal ah_cea
+    add wave -group Command -group Request ah_ceapar
+    add wave -group Command -group Request -radix hexadecimal ah_cch
+
+    add wave -group Command -group Response ha_rvalid
+    add wave -group Command -group Response -radix hexadecimal ha_rtag
+    add wave -group Command -group Response ha_rtagpar
+    add wave -group Command -group Response -radix hexadecimal ha_response
+    add wave -group Command -group Response -radix signed ha_rcredits
+    add wave -group Command -group Response -radix hexadecimal ha_rcachestate
+    add wave -group Command -group Response -radix hexadecimal ha_rcachepos
+
 
 
 # MMIO
 #   Request
 	add wave -group MMIO -group Request -noupdate ha_mmval
+	add wave -group MMIO -group Request -noupdate ha_mmcfg
+	add wave -group MMIO -group Request -noupdate ha_mmrnw
 	add wave -group MMIO -group Request -noupdate -radix hexadecimal ha_mmdata
 	add wave -group MMIO -group Request -noupdate -radix hexadecimal ha_mmad
 
@@ -122,9 +147,9 @@ proc simcapi { tbname } {
 #    add wave -noupdate {top/a0/afurev/streamctrl_mgr_avail_2}
 #    add wave -noupdate {top/a0/afurev/streamctrl_mgr_avail_3}
 
-#    force -drive ha_pclock 1'b0, 1'b1 2 -repeat 4
     onfinish stop
-    run 20us
+
+    run -all
 }
 
 proc rs {} { source testbuf.tcl }

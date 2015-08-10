@@ -14,6 +14,8 @@ export ClientServer::*;
 import FIFO::*;
 import FIFOF::*;
 
+import DReg::*;
+
 import Assert::*;
 
 function Bit#(32) upper(Bit#(64) i) = truncate(pack(i>>32));
@@ -71,14 +73,23 @@ module mkMMIOSplitter#(Server#(MMIORWRequest,MMIOResponse) mmCfg,Server#(MMIORWR
     (* mutually_exclusive="mmCfgResp,mmDataResp" *)
     rule mmCfgResp;
         let r <- mmCfg.response.get;
-//        $display($time," INFO: config response ",fshow(r));
         mmResp.enq(r);
     endrule
     
     rule mmDataResp;
         let r <- mmPSA.response.get;
-//        $display($time," INFO: data response ",fshow(r));
         mmResp.enq(r);
+    endrule
+
+
+    // decouple sending the downstream request from the method to break the chain of implicit conditions
+    // fire_when_enabled assertion checks that the downstream module never applies backpressure when a request is coming in
+
+    Reg#(Maybe#(MMIORWRequest)) mmPSAReq <- mkDReg(tagged Invalid);
+
+    (* fire_when_enabled *)
+    rule mmPSASend if (mmPSAReq matches tagged Valid .v);
+        mmPSA.request.put(v);
     endrule
 
     mkConnection(toGet(mmResp),toPut(asIfc(o)));
@@ -98,7 +109,8 @@ module mkMMIOSplitter#(Server#(MMIORWRequest,MMIOResponse) mmCfg,Server#(MMIORWR
             if (cmd.mmcfg)
                 mmCfg.request.put(req);
             else if (running)
-                mmPSA.request.put(req);
+                mmPSAReq._write(tagged Valid req);      // no implicit conditions here, but downstream may have implicit
+                                                        // but check in this module that it can always fire
             else
                 $display($time,"ERROR: MMIO problem-space access request while AFU not running");
 

@@ -9,7 +9,9 @@
 #include <boost/range/adaptor/indexed.hpp>
 
 
+#ifdef HAVE_BOOST_ALIGN
 #include <boost/align/is_aligned.hpp>
+#endif
 
 #include "aligned_allocator.hpp"
 
@@ -32,6 +34,7 @@ struct StreamWED {
     uint64_t    size;
 };
 
+#include <boost/version.hpp>
 
 int main (int argc, char *argv[])
 {
@@ -58,23 +61,29 @@ int main (int argc, char *argv[])
 	wed->src=received.data()+N;
 	wed->size=N*sizeof(uint64_t);
 
+#ifdef HAVE_BOOST_ALIGN
 	assert(boost::alignment::is_aligned(CACHELINE_BYTES,received.data()));
 	assert(boost::alignment::is_aligned(CACHELINE_BYTES,wed->src));
-
-
-#ifdef HARDWARE
-	AFU afu(string("/dev/cxl/afu0.0d"));
-#else
-	AFU afu(string("/dev/cxl/afu0.0"));
 #endif
 
+
+	AFU afu(string("/dev/cxl/afu0.0d"));
+
 	afu.start(wed);
+
+	cout << hex << setfill('0');
+
+	for(unsigned i=0;i<4;++i)
+		cout << "PSA[" << setw(2) << 8*i << "]=" << setw(16) << afu.mmio_read64(8*i) << endl;
+
+	afu.mmio_write64(32,0);
+
 
 	const unsigned Nsleep=2;
 
 	cout << "AFU started, sleeping for " << Nsleep << " seconds" << endl;
 
-	sleep(Nsleep);;
+	sleep(Nsleep);
 
 	cout << "Host code awake again, checking: " << endl;
 
@@ -82,36 +91,42 @@ int main (int argc, char *argv[])
 
 	bool corruption=false;
 
-	for(const auto x : received | boost::adaptors::indexed(0U))
+	for(unsigned i=0;i<3*N;++i)
 	{
-		if (x.index() < N)
+		if (i < N)
 		{
-			if (x.value() != 0)
+			if (received[i] != 0)
 			{
 				corruption = true;
-				cout << "ERROR: Corruption write at index " << x.index() << " value " << x.value() << endl;
+				cout << "ERROR: Corruption write at index " << i << " value " << received[i] << endl;
 			}
 		}
-		else if (x.index() < 2*N)
+		else if (i < 2*N)
 		{
-			if (x.index() % 4 == 0)
-				cout << x.index() << ": ";
-			cout << setw(16) << hex << x.value() << ' ';
-			if(x.index() % 4 == 3)
+			if (i % 4 == 0)
+				cout << i << ": ";
+			cout << setfill('0') << setw(16) << hex << received[i] << ' ';
+			if(i % 4 == 3)
 				cout << endl;
-			os << setw(16) << hex << x.value() << endl;
+			os << setw(16) << hex << received[i] << endl;
 		}
 		else
 		{
-			if (x.value() != 0)
+			if (received[i] != 0)
 			{
 				corruption = true;
-				cout << "ERROR: Corruption write at index " << x.index() << " value " << x.value() << endl;
+				cout << "ERROR: Corruption write at index " << i << " value " << received[i] << endl;
 			}
 		}
 	}
 
 	assert(!corruption);
+
+
+	for(unsigned i=0;i<4;++i)
+		cout << "PSA[" << setw(2) << 8*i << "]=" << setw(16) << afu.mmio_read64(8*i) << endl;
+
+	afu.mmio_write64(40,0);
 
 	os.close();
 

@@ -18,6 +18,8 @@ import AFUHardware::*;
 import Reserved::*;
 import BDPIPipe::*;
 
+import ShiftRegUnfunnel::*;
+
 import TagManager::*;
 
 import ReadBuf::*;
@@ -59,9 +61,6 @@ interface AFUToHostStream;
     // the outgoing stream
     interface Put#(Bit#(1024)) ostream;
 endinterface
-
-
-function Bit#(n) padpack(data_t i) provisos (Bits#(data_t,ni),Add#(ni,__some,n)) = extend(pack(i));
 
 
 /** Sinks a stream to host memory.
@@ -190,14 +189,18 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
 
 
 	//// Stream consumer: fix endianness, unfunnel, reverse elements, and pack into 1024b vector
-	PipeOut#(Vector#(1,Bit#(32))) iEndian <- mkFn_to_Pipe(compose(unpack,compose(pack,endianSwap)),pi);
-    PipeOut#(Vector#(32,Bit#(32))) iUnFun <- mkUnfunnel(False,iEndian);
+//	PipeOut#(Vector#(1,Bit#(32))) iEndian <- mkFn_to_Pipe(compose(unpack,compose(pack,endianSwap)),pi);
+//    PipeOut#(Vector#(32,Bit#(32))) iUnFun <- mkUnfunnel(False,iEndian);
+//    PipeOut#(Bit#(1024)) stream <- mkFn_to_Pipe(compose(pack,reverse),iUnFun);
 
-    PipeOut#(Bit#(1024)) stream <- mkFn_to_Pipe(compose(pack,reverse),iUnFun);
+    PipeOut#(Bit#(1024)) stream <- mkShiftRegUnfunnel(Left,pi);
 
 
 
     //// Host -> AFU stream controller
+
+    let pwStart <- mkPulseWire;
+    let pwFinish <- mkPulseWire;
 
     let streamctrl <- mkAFUToHostStream;
 
@@ -205,15 +208,26 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
 
     FIFO#(void) ret <- mkFIFO1;
 
+    Reg#(Bool) streamDone <- mkReg(False);
+    Reg#(Bool) masterDone <- mkReg(False);
+
     Stmt ctlstmt = seq
+        masterDone <= False;
+        streamDone <= False;
+        await(pwStart);
         action
             $display($time," INFO: AFU Master FSM starting");
             $display($time,"      Size:          %016X",wed.entire.size.addr);
             $display($time,"      Start address: %016X",wed.entire.eaDst.addr);
             streamctrl.start(wed.entire.eaDst.addr,wed.entire.size.addr);
         endaction
-        await(streamctrl.done);
-        $display($time," INFO: AFU Master FSM copy complete");
+        action
+            await(streamctrl.done);
+            $display($time," INFO: AFU Master FSM copy complete");
+            streamDone <= True;
+        endaction
+        await(pwFinish);
+        masterDone <= True;
         ret.enq(?);
     endseq;
 
@@ -226,10 +240,12 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
     ClientU#(CacheCommand,CacheResponse) cmd <- mkClientUFromClient(streamctrl.cmd);
 
 	Wire#(Bit#(512)) respW <- mkWire;
-	
+
 	rule getBufferResponse;
 		respW <= streamctrl.br.response;
 	endrule
+
+    FIFO#(MMIOResponse) mmResp <- mkFIFO1;
 
 
     interface SegmentedReg wedreg = wed;
@@ -237,7 +253,6 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
     interface ClientU command = cmd;
 
     interface AFUBufferInterface buffer;
-//        interface Put readdata = streamctrl.bw;
         interface ServerAFL writedata;
 			interface Put request;
 				method Action put(BufferReadRequest req) = streamctrl.br.request.put(req);
@@ -248,14 +263,35 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
 		endinterface
     endinterface
 
-// no MMIO support
     interface Server mmio;
-        interface Get response;
-            method ActionValue#(MMIOResponse) get if (False) = actionvalue return ?; endactionvalue;
-        endinterface
+        interface Get response = toGet(mmResp);
 
         interface Put request;
-            method Action put (MMIORWRequest i) = noAction;
+            method Action put (MMIORWRequest i);
+                if (i matches tagged DWordWrite { index: .dwi, data: .dwd })
+                begin
+                    case (dwi) matches
+                        4: pwStart.send;
+                        5: pwFinish.send;
+                        default: noAction;
+                    endcase
+
+                    mmResp.enq(WriteAck);
+                end
+                else if (i matches tagged DWordRead { index: .dwi })
+                    case (dwi) matches
+                        0:          mmResp.enq(tagged DWordData 64'h0123456700f00d00);
+                        1:          mmResp.enq(tagged DWordData pack(wed.entire.eaDst.addr));
+                        2:          mmResp.enq(tagged DWordData pack(wed.entire.size.addr));
+                        3:          mmResp.enq(tagged DWordData (streamDone ? 64'h1111111111111111 : 64'h0));
+                        4:          mmResp.enq(tagged DWordData (masterDone ? 64'hf00ff00ff00ff00f : 64'h1));
+                        default:    mmResp.enq(tagged DWordData 0);
+                    endcase
+                else
+                    mmResp.enq(WriteAck);           // just ack word read/write
+                        
+                
+            endmethod
         endinterface
 
     endinterface
@@ -277,48 +313,39 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
 
     interface FSM rst = rstfsm;
 
-    method AFUAttributes attributes = AFUAttributes {
-        brlat: 2,
-        pargen: False,
-        parcheck: False };
-
 endmodule
 
 import FIFOF::*;
 
 
-(* clock_prefix="ha_pclock", no_default_reset *)
+(* clock_prefix="ha_pclock" *)
 
 module mkSyn_AFUToHost(AFUHardware#(2));
-    //// Reset generation
-
-    let por <- mkPOR(1,reset_by noReset);
-    let clk <- exposeCurrentClock;
-    MakeResetIfc rstctrl <- mkResetSync(0,False,clk,reset_by noReset);
-
-	//// RNG for write data
-//	let rng <- mkBDPIIStream(bsv_makeMersenneTwister19937,reset_by rstctrl.new_rst);
-//	PipeOut#(Bit#(32)) iPipe <- mkSource_from_fav(rng.next.get,reset_by rstctrl.new_rst);
-
-	Reg#(UInt#(32)) ctr <- mkReg(0,reset_by rstctrl.new_rst);
-	Reg#(UInt#(32)) stimctr <- mkReg(0,reset_by rstctrl.new_rst);
-	FIFOF#(Bit#(32)) stimFifo <- mkFIFOF(reset_by rstctrl.new_rst);
+    // stimulus generation
+	Reg#(UInt#(32)) ctr <- mkReg(0);
+	Reg#(UInt#(32)) stimctr <- mkReg(0);
+	FIFOF#(Bit#(32)) stimFifo <- mkFIFOF;
 
 	PipeOut#(Bit#(32)) iPipe =	f_FIFOF_to_PipeOut(stimFifo);
 
 	Stmt stim = seq
+        par
+            stimFifo.clear;
+            stimctr <= 0;
+            ctr <= 0;
+        endpar
+
 		repeat(512) action
 			stimFifo.enq(pack(stimctr));
 			stimctr <= stimctr+1;
 		endaction
-
-		repeat(10000) noAction;
-
 	endseq;
 
-	mkAutoFSM(stim,reset_by rstctrl.new_rst);
+    let stimfsm <- mkFSM(stim);
 
-
+    rule alwaysStart;
+        stimfsm.start;
+    endrule
 
 	function Action tapDisplay(Bit#(32) i) = action
 		$display($time," Input %d: %08X",ctr,i);
@@ -327,15 +354,11 @@ module mkSyn_AFUToHost(AFUHardware#(2));
 
 	PipeOut#(Bit#(32)) iPipeT <- mkTap(tapDisplay,iPipe);
 
+    // AFU instantiation & wrapping
+    let dut <- mkAFU_AFUToHostStream(iPipeT);
+    let wrap <- mkDedicatedAFUNoParity(False,False,dut);
 
-    let dut <- mkAFU_AFUToHostStream(iPipeT,reset_by rstctrl.new_rst);
-    let wrap <- mkDedicatedAFUNoParity(False,False,dut,reset_by rstctrl.new_rst);
-
-    rule doPOR if (por.isAsserted);
-        rstctrl.assertReset;
-    endrule
-
-    AFUHardware#(2) hw <- mkCAPIHardwareWrapper(wrap,reset_by rstctrl.new_rst);
+    AFUHardware#(2) hw <- mkCAPIHardwareWrapper(wrap);
     return hw;
 endmodule
 

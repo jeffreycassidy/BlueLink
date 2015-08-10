@@ -57,13 +57,11 @@ instance CAPIHardwareWrappable#(AFUHardware#(brlat),AFUWithParity#(brlat));
         interface AFUHardwareControl hwcontrol = t; 
         interface AFUHardwareStatus  hwstatus = s;
 
-        method Bool ah_paren = bsvifc.attributes.pargen;
+        method Bool ah_paren = bsvifc.paren;
         method UInt#(4) ah_brlat = case (valueOf(brlat)) matches
             2: 1;
             4: 3;
         endcase;
-
-        method Action pslAttributes(UInt#(8) ha_croom) = bsvifc.pslAttributes(PSLAttributes { croom: ha_croom });
     endmodule
 endinstance
 
@@ -89,13 +87,13 @@ endinstance
 
 interface AFUHardwareCommandRequest;
     (* ready="ah_cvalid" *)
-    method PSLCommand   ah_com;
+    method Bit#(13)     ah_com;
 
     (* always_ready *)
     method Bit#(1)      ah_compar;
 
     (* always_ready *)
-    method PSLTranslationOrdering  ah_cabt;
+    method Bit#(3)      ah_cabt;
 
     (* always_ready *)
     method EAddress64   ah_cea;
@@ -117,21 +115,36 @@ interface AFUHardwareCommandRequest;
 
 endinterface
 
-instance CAPIHardwareWrappable#(AFUHardwareCommandRequest,ReadOnly#(CacheCommandWithParity));
-    module mkCAPIHardwareWrapper#(ReadOnly#(CacheCommandWithParity) bsvifc)(AFUHardwareCommandRequest);
-        Wire#(CacheCommandWithParity) always_ready_wrapper <- mkDWire(?);
+import DReg::*;
 
-        mkConnection(bsvifc,toPut(asIfc(always_ready_wrapper)));
-        
-        method PSLCommand               ah_com      = bsvifc.com.data;
-        method Bit#(1)                  ah_compar   = always_ready_wrapper.com.parityval.pbit;
-        method PSLTranslationOrdering   ah_cabt     = always_ready_wrapper.cabt;
-        method EAddress64               ah_cea      = always_ready_wrapper.cea.data;
-        method Bit#(1)                  ah_ceapar   = always_ready_wrapper.cea.parityval.pbit;
-        method UInt#(16)                ah_cch      = always_ready_wrapper.cch;
-        method UInt#(12)                ah_csize    = always_ready_wrapper.csize;
-        method UInt#(8)                 ah_ctag     = always_ready_wrapper.ctag.data;
-        method Bit#(1)                  ah_ctagpar  = always_ready_wrapper.ctag.parityval.pbit;
+instance CAPIHardwareWrappable#(AFUHardwareCommandRequest,ReadOnly#(CacheCommandWithParity));
+    module mkCAPIHardwareWrapper#(ReadOnly#(CacheCommandWithParity) bsvifc)(AFUHardwareCommandRequest)
+        provisos (Bits#(PSLCommand,n),Bits#(PSLTranslationOrdering,nabt));
+
+        // For most outputs, standard treatment is fine
+        Reg#(CacheCommandWithParity) oReg <- mkReg(?);
+
+        // For enums, ensure that bit packing happens before the reg, because it may involve some muxing
+        Reg#(Bit#(n)) oCmdReg <- mkReg(?);
+        Reg#(Bit#(nabt)) oCabtReg <- mkReg(?);
+        Reg#(Bool) oCvalid <- mkDReg(False);
+
+        rule sendOutput;
+            oReg._write(bsvifc);
+            oCmdReg._write(pack(bsvifc.com.data));
+            oCabtReg._write(pack(bsvifc.cabt));
+            oCvalid <= True;
+        endrule
+
+        method Bit#(13)                 ah_com      if (oCvalid) = oCmdReg;
+        method Bit#(1)                  ah_compar   = oReg.com.parityval.pbit;
+        method Bit#(3)                  ah_cabt     = oCabtReg;
+        method EAddress64               ah_cea      = oReg.cea.data;
+        method Bit#(1)                  ah_ceapar   = oReg.cea.parityval.pbit;
+        method UInt#(16)                ah_cch      = oReg.cch;
+        method UInt#(12)                ah_csize    = oReg.csize;
+        method UInt#(8)                 ah_ctag     = oReg.ctag.data;
+        method Bit#(1)                  ah_ctagpar  = oReg.ctag.parityval.pbit;
     endmodule
 endinstance
 
@@ -328,6 +341,7 @@ endinterface
 
 instance CAPIHardwareWrappable#(AFUHardwareControl,Put#(JobControlWithParity));
     module mkCAPIHardwareWrapper#(Put#(JobControlWithParity) bsvifc)(AFUHardwareControl);
+    
         method Action put(PSLJobOpcode ha_jcom,Bit#(1) ha_jcompar,EAddress64 ha_jea, Bit#(1) ha_jeapar) = 
             bsvifc.put( JobControlWithParity {
                 opcode : DataWithParity { data: ha_jcom, parityval: OddParity { pbit: ha_jcompar } },
@@ -439,8 +453,7 @@ module mkCheckAFUReset#(AFU#(brlat) shim)(Tuple2#(Bool,AFU#(brlat)));
                 method UInt#(64) jerror = shim.status.jerror;
             endinterface
             
-            method attributes = shim.attributes;
-            method pslAttributes = shim.pslAttributes;
+            method Bool paren = shim.paren;
     endinterface);
 endmodule
 

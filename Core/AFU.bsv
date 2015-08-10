@@ -22,10 +22,7 @@ interface AFUWithParity#(numeric type brlat);
     interface AFUStatus                     status;
 
     (* always_enabled *)
-    method AFUAttributes attributes;
-
-    (* always_enabled *)
-    method Action pslAttributes(PSLAttributes desc);
+    method Bool paren;
 endinterface
 
 interface AFU#(numeric type brlat);
@@ -41,10 +38,7 @@ interface AFU#(numeric type brlat);
 
     // static method, must not change during operation (once reset done)
     (* always_ready *)
-    method AFUAttributes attributes;
-
-    (* always_enabled *)
-    method Action pslAttributes(PSLAttributes desc);
+    method Bool paren;
 endinterface
 
 interface AFUStatus;
@@ -123,12 +117,6 @@ function AFUWithParity#(brlat) ignoreParity(AFU#(brlat) afu) = interface AFUWith
     endinterface
 
     interface AFUStatus status = afu.status;
-    method AFUAttributes attributes = AFUAttributes {
-        parcheck: afu.attributes.parcheck,
-        pargen: False,
-        brlat: afu.attributes.brlat
-    };
-    method Action pslAttributes(PSLAttributes desc) = afu.pslAttributes(desc);
 endinterface;
 
 // MReg is a "Maybe Reg"
@@ -202,9 +190,5 @@ module mkRegShim#(AFU#(brlat) i)(AFU#(brlat)) provisos (Bits#(CacheCommand,nbc))
 
     interface AFUStatus                     status = i.status;
 
-    method attributes = i.attributes;
-
-    method pslAttributes = i.pslAttributes;
-    
 endmodule
 endpackage

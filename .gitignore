@@ -1,5 +1,3 @@
-transcript
-work/
 *.so
 *.o
 mk*.cxx
@@ -12,4 +10,10 @@ a.out
 pseries_nvram.*.bin
 mk*.v
 *.bo
-
+vpi_wrapper_*
+register.[ch]
+*.out
+host2afu
+afu2host
+.project
+.cproject

@@ -534,27 +534,31 @@ endcase;
 
 
 typedef struct { 
-    DataWithParity#(PSLJobOpcode,OddParity)   opcode;
-    DataWithParity#(EAddress64,OddParity)     jea;
+    DataWithParity#(PSLJobOpcode,OddParity)     opcode;
+    DataWithParity#(EAddress64,OddParity)       jea;
+    UInt#(8)                                    croom;
 } JobControlWithParity deriving(Bits);
 
 typedef struct { 
     PSLJobOpcode    opcode;
     EAddress64      jea;
+    UInt#(8)        croom;
 } JobControl deriving(Bits);
 
 instance ParityStruct#(JobControl,JobControlWithParity);
     function JobControlWithParity make_parity_struct(Bool pargen,JobControl jc) = 
         JobControlWithParity {
             opcode: make_parity_struct(pargen,jc.opcode),
-            jea:    make_parity_struct(pargen,jc.jea) };
+            jea:    make_parity_struct(pargen,jc.jea),
+            croom: jc.croom };
 
     function Bool parity_ok(JobControlWithParity jcp) = parity_ok(jcp.opcode) && parity_ok(jcp.jea);
 
     function JobControl ignore_parity(JobControlWithParity jcp) =
         JobControl {
             opcode: ignore_parity(jcp.opcode),
-            jea:    ignore_parity(jcp.jea) };
+            jea:    ignore_parity(jcp.jea),
+            croom: jcp.croom };
 endinstance
 
 instance FShow#(JobControlWithParity);
@@ -583,8 +587,8 @@ endinstance
 
 
 typedef union tagged {
-    void Done;
-    UInt#(64) Error;
+    void        Done;
+    UInt#(64)   Error;
 } AFUReturn deriving(Bits,Eq,FShow);
 
 

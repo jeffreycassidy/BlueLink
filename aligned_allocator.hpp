@@ -10,6 +10,11 @@
 
 #include <cstdlib>
 
+/** Superficially, this appears to duplicate boost::aligned_allocator. However, Boost requires an attribute on the type which is a
+ * bit of a pain.
+ *
+ */
+
 template<typename T,std::size_t align>class aligned_allocator
 {
 public:
@@ -29,8 +34,8 @@ public:
 
     ~aligned_allocator(){}
 
-    pointer address(reference x) const { return &x; }
-    const_pointer address(const_reference x) const { return &x; }
+    pointer 		address(reference x) const { return &x; }
+    const_pointer 	address(const_reference x) const { return &x; }
 
     pointer allocate(size_type n,std::allocator<void>::const_pointer hint=nullptr)
     {

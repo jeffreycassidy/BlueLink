@@ -6,7 +6,8 @@ import PSLTypes::*;
 import Connectable::*;
 import Convenience::*;
 import ClientServerFL::*;
-import DReg::*;
+
+import FIFO::*;
 
 import MMIO::*;
 import MMIOConfig::*;
@@ -31,9 +32,6 @@ interface DedicatedAFUNoParity#(type wed_t,numeric type brlat);
 
     // reset
     interface FSM                   rst;
-
-    // AFU Attributes (parity gen/check & latency)
-    method AFUAttributes attributes;
 endinterface
 
 typedef union tagged {
@@ -49,11 +47,12 @@ typedef union tagged {
 module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(wed_t,brlat) afu)(AFUWithParity#(brlat));
 
     Reg#(DedicatedAFUStatus)                st <- mkReg(Unknown);
-    Reg#(Bool)                  start_next <- mkDReg(False);
 
     Wire#(EAddress64)           jea_in <- mkWire;
 
     Wire#(CacheCommand)         master_cmd <- mkWire;
+
+    FIFO#(void) startReq <- mkFIFO1;
 
     PulseWire pw_rst <- mkPulseWire;
     PulseWire pwDone <- mkPulseWire;
@@ -109,21 +108,25 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
 
     let masterfsm <- mkFSM(master);
 
-    let masterstart <- mkOnce(action masterfsm.start; endaction);
-    rule alwaysStart;
-        masterstart.start;
-    endrule
-
-    rule startrst if (pw_rst);
+    rule abortMaster if (pw_rst);
+        $display($time,": DedicatedAFU received reset and is aborting master FSM");
         masterfsm.abort;
-        start_next <= True;
     endrule
 
-    rule startmaster if (start_next);
+    rule enqStart if (pw_rst);
+        startReq.enq(?);
+        $display($time,": DedicatedAFU received reset and is enqing startReq");
+    endrule
+
+    rule startMaster;
         masterfsm.start;
+        startReq.deq;
+        $display($time,": DedicatedAFU starting master FSM");
     endrule
 
     Wire#(CacheCommand) cmd <- mkWire;
+
+    (* preempts="(ping,passcmd),bad" *)
 
     rule ping if (st matches tagged ReadWED .ea);
         $display($time,": INFO - In ReadWED state (",fshow(ea),") issuing command ",fshow(master_cmd));
@@ -131,19 +134,18 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
         $display($time,": INFO - Issuing WED read command ",fshow(master_cmd));
     endrule
 
-    rule passcmd;
-        if (st == Running)
-            cmd <= afu.command.request;
-        else
-        begin
-            $display($time,": ERROR - DedicatedAFU received unexpected command from AFU while in status ",fshow(st));
-            $display($time,"    details: ",fshow(afu.command.request));
-        end
+    rule passcmd if (st == Running);
+        cmd <= afu.command.request;
+    endrule
+
+    rule bad;
+        $display($time,": ERROR - DedicatedAFU received unexpected command from AFU while in status ",fshow(st));
+        $display($time,"    details: ",fshow(afu.command.request));
     endrule
 
     Server#(MMIORWRequest,MMIOResponse) mmCfg <- mkMMIOStaticConfig(
         DedicatedProcessConfig {
-            num_ints: 2,
+            num_ints: 0,
             num_of_afu_crs: 0,
             afu_cr_len: 0,
             afu_cr_offset: 0,
@@ -159,11 +161,6 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
     endcase;
 
     ServerARU#(MMIOCommand,MMIOResponse) mmSplit <- mkMMIOSplitter(mmCfg,afu.mmio,mmioAcceptPSA);
-
-    rule showMMIOResp;
-        let o = mmSplit.response;
-//        $display($time,"DedicatedAFU: received MMIO response ",fshow(o));
-    endrule
 
     interface ClientU command;
         interface ReadOnly request;
@@ -286,11 +283,8 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
         endcase;
     endinterface
 
-    method AFUAttributes attributes = AFUAttributes {
-        parcheck: afu.attributes.parcheck,
-        pargen: False,
-        brlat: afu.attributes.brlat
-    };
+    method Bool paren = pargen;
+
 endmodule
 
 endpackage

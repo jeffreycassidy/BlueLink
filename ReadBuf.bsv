@@ -4,6 +4,7 @@ import PSLTypes::*;
 import AFU::*;
 import BLProgrammableLUT::*;
 import Vector::*;
+import ClientServerU::*;
 
 import DReg::*;
 

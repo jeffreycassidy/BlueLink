@@ -5,32 +5,29 @@ Bluespec SystemVerilog library for use of the IBM Coherent Accelerator-Processor
 The current version provides a thin wrapper over the Verilog interface provided by IBM, along with type definitions to make
 interfacing easier.
 
-All interface data structures come in with- and without-parity versions, and FShow instances are provided to facilitate debug.
-There is also the SnoopConnection interface which parrots out everything flowing across the connection to stdout.
+The DedicatedAFU wrapper simplifies interfacing by taking care of config-space MMIO, WED read, and status output. It also registers
+the command inputs to meet timing. The afu2host example was synthesized and run in hardware, meeting timing and functioning
+correctly.
 
-In the future, I plan to develop and release wrappers which provide successively more convenience to the developer (eg. parity
-handling, request-tag management, etc) as well as submodules with more powerful functionality (connections to FPGA Block
-RAM/regs/MLABS are just being packaged for release).
-
+By writing an AFU which conforms to the DedicatedAFU#(brlat) interface, you can get started quickly and easily. See the afu2host
+example described below.
 
 
 Dependencies
 ------------
 
-* Systemsim, the IBM POWER8 functional simulator
+* (optional) Systemsim, the IBM POWER8 functional simulator (for Tcl-based interactive simulation)
     Tested with version 1.0-2 Build 10:00:31 Oct 29 2014
     Available ftp://public.dhe.ibm.com/software/server/powerfuncsim/p8/packages/v1.0-2
 
 * The IBM PSL Simulation Environment (PSLSE) to provide the afu_driver library
-    Available http://github.com/kirkmorrow/pslse
-    Tested with commit 60e1ec5cc7
+    Available http://github.com/ibm-capi/pslse
+    Tested with commit 95cb43474ab1d3af129c1ae68a281446f4f8df5f (needed modifications to parsing of pslse_server.dat)
 
 * The Bluespec Compiler bsc
     Note: only Verilog simulation is currently supported due to the Verilog/VPI code provided by IBM
 
-* The BlueLogic package, a collection of handy "glue logic" in Bluespec
-    Also available at github.com/jeffreycassidy/BlueLogic
-
+* ModelSim (tested on Altera Starter Edition 10.3c)
 
 
 Installation notes
@@ -51,15 +48,13 @@ that broke ModelSim's GUI (at least if using Altera edition; solution was to use
 Environment setup
 -----------------
 
-The following environment variables can influence the package/demo function
+The following environment variables and files can influence the package/demo function
 
-CAPI_AFU_DRIVER  	| Specifies the location of the AFU driver shared library in PSLSE (required for Verilog simulation)
-CAPI_AFU_HOST		| AFU hostname (defaults to localhost)
-CAPI_AFU_PORT		| AFU port (defaults to 32768)
-CAPI_SYSTEMSIM_PATH	| Path to Systemsim root
-BLUELOGIC   		| Path to the BlueLogic library (defaults to ../BlueLogic from BlueLink path)
-BLUELINK    		| Path to the BlueLink library
+PSLSE_CXL_DIR       | Where the libcxl.so and #include files are found for the simulation libcxl
+PSLSE_ROOT          | The root pslse directory
 
+LD_LIBRARY_PATH     | Needs to contain the path to Bluespec/lib/VPI/g++4 and libcxl.so
+capi_env.tcl        | Does some setup for the Modelsim simulation
 
 
 Outstanding issues
@@ -67,3 +62,20 @@ Outstanding issues
 
 * Parity generation for buffer reads/writes is not timed correctly since the spec has a lag in it between the valid and parity
 presentation
+
+
+Examples
+========
+
+afu2host
+--------
+
+This AFU just writes a counter back to host memory, and provides a few simple AFU registers to confirm correct WED read.
+
+After installing pslse, it can be run by entering the BlueLink folder, then running:
+
+make test-afu2host
+
+which will compile the necessary bluespec libraries, AFU code, host code, and launch Modelsim.
+
+

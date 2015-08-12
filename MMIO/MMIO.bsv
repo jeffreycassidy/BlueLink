@@ -6,10 +6,12 @@ import Vector::*;
 import PSLTypes::*;
 import ClientServer::*;
 import GetPut::*;
+import ClientServerU::*;
 
 export MMIO::*;
 export GetPut::*;
 export ClientServer::*;
+export ClientServerU::*;
 
 import FIFO::*;
 import FIFOF::*;

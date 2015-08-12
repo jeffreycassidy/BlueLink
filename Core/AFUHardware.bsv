@@ -1,20 +1,26 @@
-// Provides AFUHardware#(brlat), a port-exact wrapper for the AFU's expected RTL footprint (plus RST_N)
+package AFUHardware;
 
 import AFU::*;
 import PSLTypes::*;
 import Parity::*;
 import Assert::*;
-import Clocks::*;
+import ClientServerU::*;
 
+
+/** Typeclass for things that can be wrapped into a CAPI pinout-compatible module.
+ *
+ * hwifc is the CAPI-compatible module, bsvifc is the interface using higher-level Bluespec structs/methods etc.
+ */
 
 typeclass CAPIHardwareWrappable#(type hwifc, type bsvifc);
     module mkCAPIHardwareWrapper#(bsvifc b)(hwifc);
 endtypeclass
 
 
-/** AFUHardware#(brlat)
- *
- */
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// AFUHardware toplevel (all ports plus RST_N)
 
 
 interface AFUHardware#(numeric type brlat);
@@ -30,32 +36,34 @@ interface AFUHardware#(numeric type brlat);
     (* prefix="" *)
     interface AFUHardwareControl        hwcontrol;
 
-    (* prefix="" *)
-    interface AFUHardwareStatus         hwstatus;
+    (* prefix="ah" *)
+    interface AFUStatus                 hwstatus;
 
     (* prefix="",always_enabled *)
     method UInt#(4) ah_brlat;
 
     (* prefix="",always_enabled *)
     method Bool     ah_paren;
-
-    (* prefix="",always_enabled *)
-    method Action pslAttributes(UInt#(8) ha_croom);
 endinterface
 
-instance CAPIHardwareWrappable#(AFUHardware#(brlat),AFUWithParity#(brlat));
-    module mkCAPIHardwareWrapper#(AFUWithParity#(brlat) bsvifc)(AFUHardware#(brlat));
+instance CAPIHardwareWrappable#(AFUHardware#(brlat),AFU#(brlat));
+    module mkCAPIHardwareWrapper#(AFU#(brlat) bsvifc)(AFUHardware#(brlat));
         let c <- mkCAPIHardwareWrapper(bsvifc.command);
         let b <- mkCAPIHardwareWrapper(bsvifc.buffer);
         let m <- mkCAPIHardwareWrapper(bsvifc.mmio);
         let t <- mkCAPIHardwareWrapper(bsvifc.control);
-        let s <- mkCAPIHardwareWrapper(bsvifc.status);
 
-        interface AFUHardwareCommand hwcommand = c;
-        interface AFUHardwareBuffer  hwbuffer = b;
-        interface AFUHardwareMMIO    hwmmio = m;
-        interface AFUHardwareControl hwcontrol = t; 
-        interface AFUHardwareStatus  hwstatus = s;
+        // assertion checks
+        staticAssert(valueOf(brlat)==2 || valueOf(brlat)==4,"Invalid buffer read latency - must be 2 or 4");
+
+        interface AFUHardwareCommand    hwcommand = c;
+        interface AFUHardwareBuffer     hwbuffer = b;
+        interface AFUHardwareMMIO       hwmmio = m;
+        interface AFUHardwareControl    hwcontrol = t;
+
+
+        // passthroughs
+        interface AFUStatus             hwstatus = bsvifc.status;
 
         method Bool ah_paren = bsvifc.paren;
         method UInt#(4) ah_brlat = case (valueOf(brlat)) matches
@@ -66,6 +74,11 @@ instance CAPIHardwareWrappable#(AFUHardware#(brlat),AFUWithParity#(brlat));
 endinstance
 
 
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// AFUHardwareCommand
+//
+// Registers the outgoing commands for timing
 
 interface AFUHardwareCommand;
     (* prefix="" *)
@@ -125,6 +138,7 @@ instance CAPIHardwareWrappable#(AFUHardwareCommandRequest,ReadOnly#(CacheCommand
         Reg#(CacheCommandWithParity) oReg <- mkReg(?);
 
         // For enums, ensure that bit packing happens before the reg, because it may involve some muxing
+        // When packing enums, BSV inserts logic to ensure valid values (defaulting to last enum value)
         Reg#(Bit#(n)) oCmdReg <- mkReg(?);
         Reg#(Bit#(nabt)) oCabtReg <- mkReg(?);
         Reg#(Bool) oCvalid <- mkDReg(False);
@@ -149,8 +163,6 @@ instance CAPIHardwareWrappable#(AFUHardwareCommandRequest,ReadOnly#(CacheCommand
 endinstance
 
 
-
-
 interface AFUHardwareCommandResponse;
     (* always_ready, enable="ha_rvalid",prefix="" *)
     method Action putCacheResponse(RequestTag ha_rtag,Bit#(1) ha_rtagpar,PSLResponseCode ha_response,Int#(9) ha_rcredits,
@@ -172,6 +184,12 @@ instance CAPIHardwareWrappable#(AFUHardwareCommandResponse,Put#(CacheResponseWit
 endinstance
 
 
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// AFUHardwareBuffer
+
 interface AFUHardwareBuffer#(numeric type brlat);
     (* prefix="" *)
     interface AFUHardwareBufferRead#(brlat) hwread;
@@ -188,6 +206,8 @@ instance CAPIHardwareWrappable#(AFUHardwareBuffer#(brlat),AFUBufferInterfaceWith
         interface AFUHardwareBufferWrite hwwrite = w;
     endmodule
 endinstance
+
+
 
 interface AFUHardwareBufferRead#(numeric type brlat);
     (* prefix="" *)
@@ -206,6 +226,7 @@ instance CAPIHardwareWrappable#(AFUHardwareBufferRead#(brlat),ServerAFL#(BufferR
     endmodule
 endinstance
 
+
 interface AFUHardwareBufferReadRequest;
     (* always_ready, enable="ha_brvalid",prefix="" *)
     method Action putBR(RequestTag ha_brtag,Bit#(1) ha_brtagpar,UInt#(6) ha_brad);
@@ -222,8 +243,6 @@ instance CAPIHardwareWrappable#(AFUHardwareBufferReadRequest,Put#(BufferReadRequ
 endinstance
 
 
-
-
 interface AFUHardwareBufferReadResponse;
     (* always_ready *)
     method Bit#(512)    ah_brdata;
@@ -234,12 +253,16 @@ endinterface
 
 instance CAPIHardwareWrappable#(AFUHardwareBufferReadResponse,ReadOnly#(DWordWiseOddParity512));
     module mkCAPIHardwareWrapper#(ReadOnly#(DWordWiseOddParity512) bsvifc)(AFUHardwareBufferReadResponse);
+        // Use a DWire to satisfy always_ready on the output ports
+        // Should be no overhead because synthesis will optimize the X to be same as upstream
         Wire#(DWordWiseOddParity512) always_ready_wrapper <- mkDWire(?);
 
-        mkConnection(bsvifc,toPut(asIfc(always_ready_wrapper)));
+        rule getWrite;
+            always_ready_wrapper <= bsvifc;
+        endrule
 
         method Bit#(512)            ah_brdata   = always_ready_wrapper.data;
-        method Bit#(8)              ah_brpar= pack(always_ready_wrapper.parityval.pvec);
+        method Bit#(8)              ah_brpar    = pack(always_ready_wrapper.parityval.pvec);
     endmodule
 endinstance
 
@@ -263,6 +286,12 @@ instance CAPIHardwareWrappable#(AFUHardwareBufferWrite,Put#(BufferWriteWithParit
     endmodule
 endinstance
 
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// AFUHardwareMMIO
 
 interface AFUHardwareMMIO;
     (* prefix="" *)
@@ -312,6 +341,8 @@ instance CAPIHardwareWrappable#(AFUHardwareMMIORequest,Put#(MMIOCommandWithParit
     endmodule
 endinstance
 
+
+
 interface AFUHardwareMMIOResponse;
     (* ready="ah_mmack" *)
     method Bit#(64) ah_mmdata;
@@ -329,131 +360,32 @@ instance CAPIHardwareWrappable#(AFUHardwareMMIOResponse,ReadOnly#(DataWithParity
         endrule
 
         method Bit#(64) ah_mmdata = rawBits(bsvifc.data);
-        method Bit#(1) ah_mmdatapar = always_ready_wrapper;
+        method Bit#(1)  ah_mmdatapar = always_ready_wrapper;
     endmodule
 endinstance
 
 
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// AFUHardwareControl
+
 interface AFUHardwareControl;
     (* always_ready,enable="ha_jval",prefix="" *)
-    method Action put(PSLJobOpcode ha_jcom,Bit#(1) ha_jcompar,EAddress64 ha_jea, Bit#(1) ha_jeapar);
+    method Action put(PSLJobOpcode ha_jcom,Bit#(1) ha_jcompar,EAddress64 ha_jea, Bit#(1) ha_jeapar, UInt#(8) ha_croom);
 endinterface
 
 instance CAPIHardwareWrappable#(AFUHardwareControl,Put#(JobControlWithParity));
     module mkCAPIHardwareWrapper#(Put#(JobControlWithParity) bsvifc)(AFUHardwareControl);
     
-        method Action put(PSLJobOpcode ha_jcom,Bit#(1) ha_jcompar,EAddress64 ha_jea, Bit#(1) ha_jeapar) = 
+        method Action put(PSLJobOpcode ha_jcom,Bit#(1) ha_jcompar,EAddress64 ha_jea, Bit#(1) ha_jeapar, UInt#(8) ha_croom) = 
             bsvifc.put( JobControlWithParity {
                 opcode : DataWithParity { data: ha_jcom, parityval: OddParity { pbit: ha_jcompar } },
-                jea    : DataWithParity { data: ha_jea,  parityval: OddParity { pbit: ha_jeapar  } }
+                jea    : DataWithParity { data: ha_jea,  parityval: OddParity { pbit: ha_jeapar  } },
+                croom  : ha_croom
             });  
     endmodule
 endinstance
 
-
-interface AFUHardwareStatus;
-    (* always_ready *)
-    method Bool ah_tbreq;
-
-    (* always_ready *)
-    method Bool ah_jyield;
-
-    (* always_ready  *)
-    method Bool ah_jcack;
-
-    (* always_ready *)
-    method UInt#(64) ah_jerror;
-
-    (* always_ready *)
-    method Bool ah_jrunning;
-
-    (* always_ready *)
-    method Bool ah_jdone;
-
-endinterface
-
-instance CAPIHardwareWrappable#(AFUHardwareStatus,AFUStatus);
-    module mkCAPIHardwareWrapper#(AFUStatus bsvifc)(AFUHardwareStatus);
-        method Bool ah_tbreq = bsvifc.tbreq;
-        method Bool ah_jyield = bsvifc.jyield;
-
-        method Bool ah_jcack = False;
-        method Bool ah_jdone = bsvifc.jdone;
-        method Bool ah_jrunning = bsvifc.jrunning;
-        method UInt#(64) ah_jerror = bsvifc.jerror;
-
-    endmodule
-endinstance
-
-
-
-/***********************************************************************************************************************************
- * Reset support
- */
-
-
-// power-on reset controller imported from Verilog
-interface POR;
-    (* always_ready *)
-    method Bool isAsserted;
-endinterface
-
-// asserts reset for n cycles after power-on (done in Verilog because BSV doesn't have power-on defaults for anything)
-import "BVI" module mkPOR#(Integer n)(POR);
-    method orst isAsserted reset_by(no_reset);
-
-    parameter n=n;
-
-    schedule isAsserted CF isAsserted;
-endmodule
-
-
-// module which sends a reset either at power-on or when specifically forced to by its boolean input going high
-module mkPowerOnSyncReset#(Bool forceRst)(MakeResetIfc);
-    Clock clk <- exposeCurrentClock;
-    let autoRst <- mkPOR(2,reset_by noReset);
-
-    MakeResetIfc rstctrl <- mkResetSync(2,False,clk,reset_by noReset);
-
-    rule doRst if (autoRst.isAsserted || forceRst);
-        rstctrl.assertReset;
-    endrule
-
-    return rstctrl;
-endmodule
-
-
-// this AFU pass-through module sends a pulse when a reset command is received
-
-(* no_default_reset *)
-
-module mkCheckAFUReset#(AFU#(brlat) shim)(Tuple2#(Bool,AFU#(brlat)));
-    let isRstCmd <- mkPulseWire(reset_by noReset);
-
-    return tuple2(isRstCmd,interface AFU;
-        interface ClientU command = shim.command;
-        interface AFUBufferInterface buffer = shim.buffer;
-        interface ServerARU mmio = shim.mmio;
-        interface Put control;
-            method Action put(JobControl jc);
-                if (jc.opcode == Reset)             // intercept reset requests and trigger internal reset machinery
-                    isRstCmd.send;
-                else                                // pass everything else through
-                    shim.control.put(jc);
-                endmethod
-            endinterface
-    
-            interface AFUStatus status;
-                method Bool tbreq = False;
-                method Bool jyield = False;
-
-                // gate the status signals when reset is applied; this seems important to PSLSE (have not tested in hw)
-                method Bool jrunning = isRstCmd ? False : shim.status.jrunning;
-                method Bool jdone = isRstCmd ? False : shim.status.jdone;
-                method UInt#(64) jerror = shim.status.jerror;
-            endinterface
-            
-            method Bool paren = shim.paren;
-    endinterface);
-endmodule
-
+endpackage

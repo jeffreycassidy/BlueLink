@@ -3,9 +3,6 @@ package DedicatedAFU;
 import AFU::*;
 import StmtFSM::*;
 import PSLTypes::*;
-import Connectable::*;
-import Convenience::*;
-import ClientServerFL::*;
 
 import FIFO::*;
 
@@ -44,7 +41,7 @@ typedef union tagged {
     UInt#(64)   Error;
 } DedicatedAFUStatus deriving(Eq,Bits,FShow);
 
-module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(wed_t,brlat) afu)(AFUWithParity#(brlat));
+module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(wed_t,brlat) afu)(AFU#(brlat));
 
     Reg#(DedicatedAFUStatus)                st <- mkReg(Unknown);
 
@@ -275,6 +272,8 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
             tagged ReadWED .*: True;
             default: False;
         endcase;
+
+        method Bool jcack=False;
 
         method Bool jdone = pwDone;
         method UInt#(64) jerror = case (st) matches

@@ -17,3 +17,5 @@ host2afu
 afu2host
 .project
 .cproject
+bsvlibs
+register.c

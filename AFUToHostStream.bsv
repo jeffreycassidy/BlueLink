@@ -318,8 +318,7 @@ endmodule
 import FIFOF::*;
 
 
-(* clock_prefix="ha_pclock" *)
-
+(*clock_prefix="ha_pclock"*)
 module mkSyn_AFUToHost(AFUHardware#(2));
     // stimulus generation
 	Reg#(UInt#(32)) ctr <- mkReg(0);

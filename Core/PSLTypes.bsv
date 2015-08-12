@@ -29,9 +29,6 @@ import PSLTranslationOrderings::*;
 import PSLResponseCodes::*;
 import Assert::*;
 
-import ClientServerFL::*;
-import Convenience::*;
-
 // re-export PSL commands necessary to use these types
 export PSLCommands::*;
 export PSLResponseCodes::*;
@@ -49,151 +46,11 @@ export FShow::*;
 // export this module
 export PSLTypes::*;
 
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Interface defintions for dealing with low-level Verilog modules
-//
-// AR: Always ready (can accept a request at any time)
-// U:  Unbuffered (response is presented for one cycle only, no handshake)
-//
-// This differs from normal Bluespec semantics where Get/Put often are connected with FIFOs
-
-interface ServerAFL#(type req_t,type res_t,numeric type lat);
-    (* always_ready *)
-    interface Put#(req_t)       request;
-
-    interface ReadOnly#(res_t)  response;
-endinterface
-
-interface ServerARU#(type req_t,type res_t);
-    (* always_ready *)
-    interface Put#(req_t)       request;
-    interface ReadOnly#(res_t)  response;
-endinterface
-
-interface ClientU#(type req_t,type res_t);
-    interface ReadOnly#(req_t)  request;
-
-    (* always_ready *)
-    interface Put#(res_t)       response;
-endinterface
-
-
-/** Makes a Client into a ClientU, with appropriate assertions.
- *      Requests are unbuffered and always accepted by ClientU, so pull Client request continuously and make available
- *      Responses are always_ready, so always accept and assert that client accepts it
- */
-
-module mkClientUFromClient#(Client#(req_t,res_t) c)(ClientU#(req_t,res_t)) provisos (Bits#(req_t,nr),Bits#(res_t,ns));
-    RWire#(req_t) req <- mkRWire;
-    RWire#(res_t) res <- mkRWire;
-    let pwAccept <- mkPulseWire;
-
-    mkConnection(c.request,toPut(req));
-
-    rule putResponse if (res.wget matches tagged Valid .v);
-        pwAccept.send;
-        c.response.put(v);
-    endrule
-
-    continuousAssert(pwAccept || !isValid(res.wget),
-        "mkClientUFromClient: Client is not ready to response despite always_ready requirement at ClientU interface");
-
-    interface Put response = toPut(res);
-    interface ReadOnly request;
-        method req_t _read if (req.wget matches tagged Valid .v) = v;
-    endinterface
-endmodule
-
-
-/** Makes a ClientU into a Client, with appropriate checks.
- *      Requests are unbuffered, so must be consumed when available (assert)
- *      ClientU is always_ready to accept response, so just pass through
- */
-
-module mkClientFromClientU#(ClientU#(req_t,res_t) c)(Client#(req_t,res_t)) provisos (Bits#(req_t,nr),Bits#(res_t,ns));
-    RWire#(req_t) req <- mkRWire;
-    let pwAck <- mkPulseWire;
-
-    rule getRequest;
-        let r = c.request._read;
-        req.wset(r);        
-    endrule
-
-    continuousAssert(pwAck || !isValid(req.wget),
-        "mkClientFromClientU: Client has ignored an unbuffered request which will be discarded");
-
-    interface Get request;
-        method ActionValue#(req_t) get if (req.wget matches tagged Valid .v);
-            pwAck.send;
-            return v;
-        endmethod
-    endinterface
-    
-
-    // ClientU response is already asserted always_ready, so must be OK
-    interface Put response = c.response;
-endmodule
-
-
-instance Connectable#(ClientU#(req_t,res_t),ServerARU#(req_t,res_t));
-    module mkConnection#(ClientU#(req_t,res_t) client,ServerARU#(req_t,res_t) server)();
-        rule reqconnect;
-            server.request.put(client.request);
-        endrule
-        rule resconnect;
-            client.response.put(server.response);
-        endrule
-    endmodule
-endinstance
-
-
-instance Connectable#(ClientU#(req_t,res_t),ServerAFL#(req_t,res_t,lat));
-    module mkConnection#(ClientU#(req_t,res_t) client,ServerAFL#(req_t,res_t,lat) server)();
-        rule reqconnect;
-            server.request.put(client.request);
-        endrule
-        rule resconnect;
-            client.response.put(server.response);
-        endrule
-    endmodule
-endinstance
-
-// Note: client is unbuffered, user must make sure that Server does not ignore a request due to blocking
-instance Connectable#(ClientU#(req_t,res_t),Server#(req_t,res_t));
-    module mkConnection#(ClientU#(req_t,res_t) client,Server#(req_t,res_t) server)();
-        rule reqconn;
-            server.request.put(client.request);
-        endrule
-        mkConnection(server.response,client.response);
-    endmodule
-endinstance
-
-// Note: client is unbuffered, user must make sure that ServerFL (fixed latency) does not ignore a request due to blocking
-instance Connectable#(ClientU#(req_t,res_t),ServerFL#(req_t,res_t,lat));
-    module mkConnection#(ClientU#(req_t,res_t) client,ServerFL#(req_t,res_t,lat) server)();
-        mkConnection(toGet(asIfc(client.request)),server.request);
-        mkConnection(server.response,client.response);
-    endmodule
-endinstance
-
-
-typedef struct {
-    UInt#(4)    brlat;      // buffer read latency (for write commands)
-    Bool        pargen;     // parity generation enable
-    Bool        parcheck;   // check parity at inputs
-} AFUAttributes deriving(Bits);
-
-typedef struct {
-    UInt#(8)    croom;
-} PSLAttributes deriving(Bits);
-
-
-
+import ClientServerU::*;
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Basic typedefs
+// Basic typedefs (RequestTag, Data words, Effective address)
 
 typedef UInt#(8)                                                    RequestTag;
 typedef DataWithParity#(Bit#(512),WordWiseParity#(8,OddParity))     DWordWiseOddParity512;
@@ -201,6 +58,10 @@ typedef DataWithParity#(Bit#(512),WordWiseParity#(8,OddParity))     DWordWiseOdd
 // wrap these in structs so they're nicely formatted when we print; can't define FShow#() if it's just a plain UInt#()
 typedef struct { UInt#(64) code; } ErrorCode    deriving(Eq,Bits,Literal);
 typedef struct { UInt#(64) addr; } EAddress64   deriving(Eq,Bits,Arith,Literal,Ord);
+typedef EAddress64 Offset64;
+typedef EAddress64 Size64;
+
+function Bool aligned(Integer nbytes, EAddress64 addr) = addr % fromInteger(nbytes) == 0;
 
 instance SizedLiteral#(EAddress64,64);
     function EAddress64 fromSizedInteger(Bit#(64) b) = EAddress64 { addr: unpack(b) };
@@ -351,8 +212,8 @@ interface PSLBufferInterfaceWithParity;
 endinterface
 
 interface PSLBufferInterface;
-    interface ClientU#(BufferReadRequest,Bit#(512))     writedata;
-    interface ReadOnly#(BufferWrite)                    readdata;
+    interface ClientU#(BufferReadRequest,Bit#(512))                                 writedata;
+    interface ReadOnly#(BufferWrite)                                                readdata;
 endinterface
 
 
@@ -585,30 +446,44 @@ endinstance
  *
  */
 
-
+// Status returned by a completed AFU
 typedef union tagged {
     void        Done;
     UInt#(64)   Error;
 } AFUReturn deriving(Bits,Eq,FShow);
 
+// Status values for a running AFU (not necessarily returned)
+typedef union tagged {
+    void        Resetting;
+    void        Ready;
+    AFUReturn   Idle;           // Finished with given return code
+} AFUCurrentStatus deriving(Bits,Eq,FShow);
 
-typedef Bit#(1024)  CacheLine;
-typedef Bit#(512)   CacheTransferUnit;
-typedef 2           CacheTransferUnitsPerLine;
 
 
 /* SegReg
  *
  * A segmented register, accessible either as a whole (r.entire) or in segments (r.seg[N])
+ * 
+ * For IBM CAPI interface:
+ *      increasing brad/bwad is increasing memory address
+ *      within each line, leftmost byte comes from the low address
+ *      P8 processor in little-endian mode
  *
- * When transferring lines, increasing brad/bwad is increasing memory address
+ * But in Bluespec:
+ *      vectors are stored in descending index order (MSB/L to R): v[N-1] v[N-2] .. v[1] v[0]
+ *      bit indexing is always downto, with MSB at left
  *
- * But in Bluespec, vectors are stored in descending index order
- *
- * Vector elements (L to R): v[N-1] v[N-2] .. v[1] v[0]
- * and order is big-endian within bit vectors
+ * Consequently:
+ *      reading contiguous 1024b lines require swapping ( bwad0 -> v[1], bwad1 -> v[0]), after which
+ *      r.seg[1] MS byte is lowest memory address in the line
+ *      r.seg[0] LS byte is highest memory address in the line
+ *      r.entire runs from lowest to highest memory address
+ *      multi-byte word order is little-endian
+ *  
+ *      Order of elements in host struct and Bluespec struct/tuple are same
+ *      Order of vectors stored in host are _reversed_ wrt Bluespec
  */
-
 
 interface SegReg#(type t,numeric type ns,numeric type nbs);
     interface Vector#(ns,Reg#(Bit#(nbs))) seg;

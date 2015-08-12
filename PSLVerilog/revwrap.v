@@ -1,6 +1,5 @@
 `ifndef DUTMODULETYPE
-//`error "DUTMODULETYPE must be defined"
-`define DUTMODULETYPE mkSyn_AFUToHost
+//`error "DUTMODULETYPE must be defined as the name of the toplevel to be wrapped"
 `endif
 
 module afu (

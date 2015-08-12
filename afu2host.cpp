@@ -13,7 +13,7 @@
 #include <boost/align/is_aligned.hpp>
 #endif
 
-#include "aligned_allocator.hpp"
+#include <BlueLink/Host/aligned_allocator.hpp>
 
 
 #include <BlueLink/Host/AFU.hpp>

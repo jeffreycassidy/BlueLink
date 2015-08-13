@@ -114,7 +114,8 @@ instance AFUConfigVector#(DedicatedProcessConfig,len) provisos (NumAlias#(10,len
                 req_prog_model: DedicatedProcess });
 
         mmCfgReg[4] = pack(CfgReg20 {
-            afu_cr_len: cfg.afu_cr_len });
+            afu_cr_len: cfg.afu_cr_len,
+			resv: ?});
 
         mmCfgReg[5] = pack(CfgReg28 {
             afu_cr_offset: cfg.afu_cr_offset });
@@ -122,13 +123,15 @@ instance AFUConfigVector#(DedicatedProcessConfig,len) provisos (NumAlias#(10,len
         mmCfgReg[6] = pack(CfgReg30 {
             per_process_psa_required: False,
             psa_required: cfg.psa_required,
-            per_process_psa_length: 0 });
+            per_process_psa_length: 0,
+			resv: ?});
 
         mmCfgReg[7] = pack(CfgReg38 {
             per_process_psa_offset: 0 });
 
         mmCfgReg[8] = pack(CfgReg40 {
-            afu_eb_len: cfg.afu_eb_len });
+            afu_eb_len: cfg.afu_eb_len,
+			resv: ? });
 
         mmCfgReg[9] = pack(CfgReg48 {
             afu_eb_offset: cfg.afu_eb_offset });

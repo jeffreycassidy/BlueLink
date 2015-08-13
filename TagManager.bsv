@@ -13,6 +13,7 @@ interface TagManager#(type tag_t);
     method Action free(tag_t t);
 
     // acquire a new tag (sequences after free if bypass enabled)
+    method Bool available;
     method ActionValue#(tag_t) acquire;
 
     method Action clear;
@@ -76,6 +77,8 @@ module mkTagManager#(Vector#(nTags,tag_t) tags,Bool bypass)(TagManager#(tag_t))
 //                dynamicAssert(!avail[i],"Attempting to free an unused tag");
             end
     endmethod
+
+    method Bool available = elem(True,availNext);
 
     method ActionValue#(tag_t) acquire if (elem(True,availNext));
         Maybe#(tag_t) o = tagged Invalid;

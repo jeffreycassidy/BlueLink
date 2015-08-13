@@ -1,2 +1,9 @@
+all: libs
+
+libs: DedicatedAFU.bo
+
 DedicatedAFU.bo: DedicatedAFU.bsv
-	bsc -p +:../Core:../../FullMonte/bluespec_objs:../../BlueLogic/Convenience:../../BlueLogic/Pipeline -u $<
+	bsc -p +:../Core:../MMIO -u $<
+
+clean:
+	rm -f *.b[ao]

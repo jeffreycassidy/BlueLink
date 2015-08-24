@@ -4,11 +4,11 @@ proc wave_capi { path } {
     wave_capi_control   $path
     wave_capi_status    $path
     wave_capi_mmio      $path
+	wave_capi_command	$path
     wave_capi_buffer    $path
 }
 
 proc wave_capi_control { path } {
-    add wave -group Control -noupdate -divider "AFU Control"
 	add wave -group Control -noupdate                       ${path}ha_jval
 	add wave -group Control -noupdate -radix hexadecimal    ${path}ha_jcom
     add wave -group Control -noupdate                       ${path}ha_jcompar

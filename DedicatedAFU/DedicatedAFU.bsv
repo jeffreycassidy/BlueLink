@@ -4,6 +4,7 @@ import AFU::*;
 import StmtFSM::*;
 import PSLTypes::*;
 
+import FIFOF::*;
 import FIFO::*;
 
 import MMIO::*;
@@ -159,6 +160,10 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
 
     ServerARU#(MMIOCommand,MMIOResponse) mmSplit <- mkMMIOSplitter(mmCfg,afu.mmio,mmioAcceptPSA);
 
+    FIFOF#(CacheResponse) afuresp <- mkGFIFOF1(True,False);
+
+    mkConnection(toGet(afuresp),afu.command.response);
+
     interface ClientU command;
         interface ReadOnly request;
             method CacheCommandWithParity _read = make_parity_struct(pargen,cmd);
@@ -177,7 +182,7 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
                                 $display($time,"    details: ",fshow(crp));
                             end
 
-                        Running:        afu.command.response.put(cr);
+                        Running:        afuresp.enq(cr);
                         default:        $display($time,": ERROR - DedicatedAFU received command response while not running (status ",fshow(st),")");
                         endcase
                 else

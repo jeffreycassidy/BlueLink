@@ -19,3 +19,7 @@ afu2host
 .cproject
 bsvlibs
 register.c
+work
+*.wlf
+transcript
+*.dSYM

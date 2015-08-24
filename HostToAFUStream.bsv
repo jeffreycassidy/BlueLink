@@ -9,155 +9,268 @@ import FIFO::*;
 import PAClib::*;
 import Vector::*;
 
-import TagManager::*;
+import CmdBuf::*;
+import FIFO::*;
+import FIFOF::*;
+import SpecialFIFOs::*;
+import RevertingVirtualReg::*;
+
+import BLProgrammableLUT::*;
 
 import ReadBuf::*;
 
+import CAPIStream::*;
 
-/** Testbench to stream data from the host, using multiple parallel in-flight tags.
+
+// Export only the public items (there are helper classes that should not be visible)
+export mkHostToAFUStream, CAPIStream::*;
+
+
+
+/** (NON-EXPORTED) Read buffer status
+ */
+
+typedef union tagged {
+	void 		Empty;                      // Available
+	RequestTag	FetchIssued;                // The read command has been issued but is not completed yet
+	void		Done;                       // Data is valid and has not been read
+} ReadBufStatus deriving(Eq,FShow,Bits);
+
+
+/** (NON-EXPORTED) Read buffer status reg
+ */
+
+interface ReadBufStatusIfc;
+	method Action fetch(RequestTag t);      // Mark the buffer as reserved for an in-progress read
+	method Action complete;                 // Read has completed
+	method Action pop;                      // Data has been read and can be discarded
+
+	(* always_ready *)
+	method Bool empty;
+
+	(* always_ready *)
+	method Bool done;
+
+	method RequestTag tag;
+endinterface
+
+
+/** (NON-EXPORTED) Read buffer status reg implementation: just a reg holding an enum with some accessor methods.
+ */
+
+module mkReadBufStatusReg(ReadBufStatusIfc);
+	Reg#(ReadBufStatus) st <- mkReg(Empty);
+
+	Wire#(RequestTag) fetchTag <- mkWire;
+	let pwPop <- mkPulseWire, pwComplete <- mkPulseWire;
+
+	(* mutually_exclusive="startFetch,doPop,doComplete" *)
+
+	rule startFetch;
+		st <= tagged FetchIssued fetchTag;
+	endrule
+
+	rule doPop if (pwPop);
+		st <= Empty;
+	endrule
+
+	rule doComplete if (pwComplete);
+		st <= Done;
+	endrule
+
+
+	// send the request
+	method Action		fetch(RequestTag tag);
+		dynamicAssert(st == Empty, "Fetch issued with non-empty buffer slot");
+		fetchTag <= tag;
+	endmethod
+
+	// handle completion
+	method Action		complete;
+		dynamicAssert(st matches tagged FetchIssued .* ? True : False , "Completion without fetch in progress");
+		pwComplete.send;
+	endmethod
+
+	// pop the buffered value
+	method Action		pop if (st == Done);
+		pwPop.send;
+	endmethod
+
+
+	method Bool			empty = st == Empty;
+	method Bool			done = st == Done;
+	method RequestTag	tag if (st matches tagged FetchIssued .ft) = ft;
+endmodule
+
+
+
+/** Module to stream data from the host, using multiple parallel in-flight tags and a ring buffer.
  * 
- * Out-of-order completions are handled by the read buffer.
+ * Issues commands when able on the supplied CmdBufClientPort. For each tag, when granted:
  *
- * For each tag:
+ *  Marks next buffer slot as FetchIssued and saves the tag ID
+ *  On arrival of data, it is written to the buffer slot (hi/lo 512b)
+ *  After completion is received, moves status to Done
+ *  When pop is called, releases the buffer slot
  *
- *  When available, acquires a tag from the TagManager
- *  Marks tag as incomplete and issues read request using the tag
- *  Enqueues the tag index in the requestTagFIFO (requests are to ordered addresses, so tags in the FIFO are ordered too)
- *  On read completion, mark tag complete
+ * Simultaneously, when the current buffer slot becomes ready, the data can be read out, the buffer slot freed, and the read ptr
+ * bumped upwards.
  *
- * Continuously check whether the oldest request has been serviced yet. If so, free up the buffer slot and pass the data out.
  *
  * Some requests may take a very long time to complete because of page faults etc. Since this is a streaming interface, we'll just
  * have to wait for those to complete because there's no way to signal out-of-order results to the downstream logic.
  *
- * TODO: Possible performance improvement (?) if we decouple the data buffer index from the tag index. Currently the same logic
- *          is used to allocate tags and buffer slots.
+ * NOTE: Since these are consecutive, the page fault occurs on the first address of the page and subsequent requests are blocked
+ * anyway.
  *
- *          Rationale: if last tag takes a very long time to complete, we stop issuing new requests even though previous tags
- *                      have completed. They are blocked by the buffer not draining.
- *
+ * TODO: Deal correctly with PAGED response? (or is this unnecessary in Abort mode?)
+ * TODO: Graceful reset logic
  */
 
-interface HostToAFUStream;
-    // Start the stream
-    method Action   start(UInt#(64) ea,UInt#(64) size);
-    method Bool     done;
-
-    // PSL interface
-    interface Client#(CacheCommand,CacheResponse)       cmd;
-    interface Put#(BufferWrite)                         bw;
-
-    // PipeOut with data
-    interface PipeOut#(Bit#(1024)) istream;
-endinterface
-
-
-
-/** Provides a PipeOut#(Bit#(1024)) stream from the host memory.
- *
- * The user starts the transfer by providing an address and a size, then is able to pull (size) bytes from the host.
- *
- * Currently requires cache-aligned ea and size. 
- */
-
-module mkHostToAFUStream(HostToAFUStream)
+module mkHostToAFUStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf)(Tuple2#(StreamControl,PipeOut#(Bit#(1024))))
     provisos (
-        NumAlias#(nt,4));
+		NumAlias#(na,6)         // Number of address bits
+    );
 
-    Integer stepBytes=128;
-    Integer alignBytes=stepBytes;
-
-    // Manage the request tags
-    let mgr <- mkTagManager(Vector#(nt,RequestTag)'(genWith(fromInteger)),False);
-
-    // keep track of which tags were requested in which order, and their completion status
-    FIFO#(RequestTag) requestTagFIFO <- mkSizedFIFO(valueOf(nt));
-    Vector#(nt,Reg#(Bool)) completed <- replicateM(mkReg(False));
-
-    Reg#(UInt#(64)) eaStart   <- mkReg(0);
-    Reg#(UInt#(64)) ea        <- mkReg(0);
-    Reg#(UInt#(64)) eaEnd     <- mkReg(0);
-
-    let rbuf <- mkAFUReadBuf(4);
+    // Stream counter
+    let { eaCounterControl, nextAddress } <- mkStreamCounter;
 
     // Output data
-    RWire#(Bit#(1024)) oData <- mkRWire;
+    FIFOF#(Bit#(1024)) oData <- mkPipelineFIFOF;
 
-    rule readyToDrain if (completed[requestTagFIFO.first]);
-        let o <- rbuf.lookup(requestTagFIFO.first);
-        oData.wset(o);
+	// Ring buffer
+	Reg#(UInt#(na)) 		rdPtr <- mkReg(0);									// next item to be streamed out
+	Reg#(UInt#(na)) 		fetchPtr <- mkReg(0);								// next item to be requested
+
+    // buffer status, 1 space per buffer slot
+    staticAssert(bufsize <= valueOf(TExp#(na)),"Inadequate address bits specified for the chosen buffer size");
+
+	List#(ReadBufStatusIfc) 	bufItemStatus <- List::replicateM(bufsize,mkReadBufStatusReg);
+    Vector#(2,Lookup#(na,Bit#(512))) rbufseg <- replicateM(mkZeroLatencyLookup(bufsize));
+
+
+    // If output is available (ie. current read buffer slot has valid data), enq it for output
+	rule outputIfAvailable;
+		// provide output, reversing 512b halflines to match Bluespec ordering convention
+		let l <- rbufseg[1].lookup(rdPtr);
+		let u <- rbufseg[0].lookup(rdPtr);
+		oData.enq( { u, l });
+
+		// mark used and bump read pointer
+		bufItemStatus[rdPtr].pop;                       // implicit condition: can only pop if data valid
+		rdPtr <= (rdPtr + 1) % fromInteger(bufsize);
+	endrule
+
+    Wire#(Tuple2#(UInt#(64),UInt#(64))) wStart <- mkWire;
+
+    (* mutually_exclusive="outputIfAvailable,doStart" *)
+    (* preempts = "doStart,fetchNext" *)
+
+    rule doStart if (wStart matches { .ea0, .size });
+        // reset host pointers
+        eaCounterControl.start(ea0,size);
+
+        // reset read buffer pointers
+		rdPtr <= 0;
+        fetchPtr <= 0;
     endrule
 
+    // If there's space in the buffer, launch a read
+    // Special case: initially fetchPtr == rdPtr, which would normally block this rule; but if slot 0 empty then start
+	rule fetchNext if (fetchPtr != rdPtr || (rdPtr==0 && bufItemStatus[0].empty));
+        let ea <- nextAddress.get;
 
-    PulseWire pwStart <- mkPulseWire;
+		// increment host read pointer and bump fetch pointer
+		fetchPtr <= (fetchPtr + 1) % fromInteger(bufsize);
 
-    method Action start(UInt#(64) ea0,UInt#(64) size);
-        eaStart <= ea0;
-        ea <= ea0;
-        eaEnd <= ea0+size;
+		// issue read
+		RequestTag tag <- cmdbuf.putcmd(                // implicit condition: able to issue command
+			CmdWithoutTag {
+			 	com: Read_cl_s,
+				cabt: Abort,
+				cea: EAddress64 { addr: ea },
+				csize: fromInteger(stepBytes) });
 
-        pwStart.send;
+		// save request tag
+		bufItemStatus[fetchPtr].fetch(tag);
+	endrule
 
-        dynamicAssert(ea0 % fromInteger(alignBytes) == 0,    "Effective address is not properly aligned");
-        dynamicAssert(size % fromInteger(alignBytes) == 0,  "Transfer size is not properly aligned");
-    endmethod
+	Wire#(RequestTag) completeTag <- mkWire;
+	let pwCompleteAck <- mkPulseWireOR;
 
-    method Bool done = ea==eaEnd && !isValid(oData.wget) && all( id , read(completed));
+    // Handle completion with done response
+	rule completionIn;
+		let resp <- cmdbuf.response.get;
 
-    interface Client cmd;
-        interface Get request;
-            method ActionValue#(CacheCommand) get if (ea != eaEnd && !pwStart);
-                let t <- mgr.acquire;
-                completed[t] <= False;
-                requestTagFIFO.enq(t);
-                ea <= ea + fromInteger(stepBytes);
-                return CacheCommand { com: Read_cl_s, ctag: t, cabt: Abort, cea: EAddress64 { addr: ea }, cch: 0, csize: fromInteger(stepBytes) };
+		case (resp.response) matches
+			Done:
+				completeTag <= resp.rtag;
+			default:
+			begin
+				$display($time,"ERROR: Invalid response type received ",fshow(resp));
+				dynamicAssert(False,"Invalid response type received");
+			end
+		endcase
+	endrule
+
+	rule completionFail if (!pwCompleteAck);
+		$display($time,": ERROR - No one ack'd the completion for tag ",fshow(completeTag));
+	endrule
+
+//    // The two repeated rules below are split to avoid the need for the -aggressive-conditions argument
+//    // otherwise the rule would carry implicit conditions that ALL buffer items must be ready
+//    // fire_when_enabled is specified because there is no fall-through mechanism if the data or completion isn't dealt with here
+
+    List#(RWire#(RequestTag)) tags <- List::replicateM(bufsize,mkRWire);
+
+    function Maybe#(t) doWGet(RWire#(t) rw) = rw.wget;
+
+
+	for(Integer i=0;i<bufsize;i=i+1)
+    begin
+        (* fire_when_enabled *)
+		rule completion if (completeTag == bufItemStatus[i].tag);
+			bufItemStatus[i].complete;
+			pwCompleteAck.send;
+    	endrule
+
+        // mark buffer ready
+        rule bufReady;
+            tags[i].wset(bufItemStatus[i].tag);
+        endrule
+	end
+
+    // handle buffer writes
+    (* fire_when_enabled *) 
+    rule bufWrite;
+        let addr = cmdbuf.buffer.readdata.bwad;
+        let data = cmdbuf.buffer.readdata.bwdata;
+        let tag  = cmdbuf.buffer.readdata.bwtag;
+
+        $display($time,fshow(cmdbuf.buffer.readdata));
+
+        Maybe#(UInt#(na)) idx = tagged Invalid;
+        for (Integer i=0;i<List::length(tags);i=i+1)
+            if (tags[i].wget matches tagged Valid .t &&& t == tag)
+                idx = tagged Valid fromInteger(i);
+
+        if (idx matches tagged Valid .i)
+            rbufseg[addr].write(i, data);
+        else
+            dynamicAssert(False,"Received data for tag not currently in use");
+    endrule
+
+    return tuple2(
+        interface StreamControl;
+            method Action start(UInt#(64) ea0,UInt#(64) size) if (eaCounterControl.done);
+                wStart <= tuple2(ea0,size);
             endmethod
-        endinterface
 
-        interface Put response;
-            method Action put(CacheResponse r);
-                case (r.response) matches
-                    Done:
-                        action
-//                            $display($time," Read completion for tag %X",r.rtag);
-                            completed[r.rtag] <= True;
+            method Bool done = eaCounterControl.done && !oData.notEmpty && rdPtr == fetchPtr;
+        endinterface,
 
-                            mgr.free(r.rtag);
-
-                            // TODO: Change this so we can restart cleanly?
-                            //dynamicAssert(!completed[r.rtag],"Completion received for unused tag");
-                        endaction
-                        
-                    default:
-                        action
-                            $display($time,"ERROR: Invalid command code received ",fshow(r));
-                            dynamicAssert(False,"Invalid command code received");
-                        endaction
-                endcase
-                    // Aerror
-                    // Derror
-                    // Nlock
-                    // Nres
-                    // Flushed
-                    // Fault
-                    // Failed
-                    // Credit
-                    // Paged
-                    // Invalid
-            endmethod
-
-        endinterface
-    endinterface
-
-    interface Put bw = rbuf.pslin;
-
-    interface PipeOut istream;
-        method Action deq if (isValid(oData.wget)) = requestTagFIFO.deq;
-        method Bit#(1024) first if (oData.wget matches tagged Valid .v) = v;
-        method Bool notEmpty = isValid(oData.wget);
-    endinterface
+        f_FIFOF_to_PipeOut(oData)
+    );
 endmodule
-
 
 endpackage

@@ -42,6 +42,7 @@ module MLAB_0l#(parameter integer DWIDTH=20,parameter integer AWIDTH=5,parameter
 	rdaddress,
 	wraddress,
 	wren,
+	rden_DUMMY,
 	q);
 
 	input	  clock;
@@ -49,6 +50,7 @@ module MLAB_0l#(parameter integer DWIDTH=20,parameter integer AWIDTH=5,parameter
 	input	[AWIDTH-1:0]  rdaddress;
 	input	[AWIDTH-1:0]  wraddress;
 	input	  wren;
+	input	rden_DUMMY;
 	output	[DWIDTH-1:0]  q;
 `ifndef ALTERA_RESERVED_QIS
 // synopsys translate_off

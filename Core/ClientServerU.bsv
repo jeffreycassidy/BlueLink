@@ -53,7 +53,7 @@ module mkClientUFromClient#(Client#(req_t,res_t) c)(ClientU#(req_t,res_t)) provi
     endrule
 
     continuousAssert(pwAccept || !isValid(res.wget),
-        "mkClientUFromClient: Client is not ready to response despite always_ready requirement at ClientU interface");
+        "mkClientUFromClient: Client is not ready to respond despite always_ready requirement at ClientU interface");
 
     interface Put response = toPut(res);
     interface ReadOnly request;

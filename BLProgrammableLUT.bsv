@@ -25,10 +25,9 @@ interface Lookup#(numeric type na,type data_t);
     (* always_ready *)
     method Action               write(UInt#(na) addr,data_t data);
 
-    (* always_enabled *)
+	(* always_ready *)
     method ActionValue#(data_t) lookup(UInt#(na) addr);
 endinterface
-
 
 
 
@@ -46,11 +45,16 @@ import "BVI" MLAB_0l = module mkAlteraStratixVMLAB_0l#(Integer depth)(Lookup#(na
     parameter DEPTH  = depth;
 
     method write(wraddress,data) enable(wren);
-    method q lookup(rdaddress) enable((*inhigh*) t);
+    method q lookup(rdaddress) enable(rden_DUMMY);
 
     schedule lookup C lookup;
     schedule write  C write;
     schedule lookup CF write;
 endmodule
+
+function m#(Lookup#(na,t)) mkZeroLatencyLookup(Integer depth)
+	provisos (
+		Bits#(t,nd),
+		IsModule#(m,a)) = mkAlteraStratixVMLAB_0l(depth);
 
 endpackage

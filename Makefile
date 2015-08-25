@@ -6,7 +6,9 @@ BSC_VER_OPTS=$(BSC_OPTS) -verilog -opt-undetermined-vals -unspecified-to X
 SUBDIRS=Core DedicatedAFU MMIO
 
 test-afu2host: work bsvlibs libs afu2host mkSyn_AFUToHost.v
-	vsim -do "source test_afu2host.tcl"
+	xterm -hold -e "sleep 6; cd /home/jcassidy/src/CAPI/pslse/pslse; ./pslse"&
+	xterm -hold -e "sleep 8; ./afu2host"&
+	xterm -e 'vsim -do "source test_afu2host.tcl"'
 
 mkSyn_AFUToHost.v: AFUToHostStream.bsv ReadBuf.bsv 
 	bsc $(BSC_VER_OPTS) -u $<

@@ -29,6 +29,14 @@ interface Lookup#(numeric type na,type data_t);
     method ActionValue#(data_t) lookup(UInt#(na) addr);
 endinterface
 
+interface MultiReadLookup#(numeric type na,type data_t);
+    (* always_ready *)
+    method Action               write(UInt#(na) addr,data_t data);
+
+    (* always_ready *)
+    interface Array#(function ActionValue#(data_t) f(UInt#(na) addr)) lookup;
+endinterface
+
 
 
 /** Wrapper around the Altera IP core for an MLAB-based unregistered lookup. The specific instance was modified to accommodate a
@@ -56,5 +64,26 @@ function m#(Lookup#(na,t)) mkZeroLatencyLookup(Integer depth)
 	provisos (
 		Bits#(t,nd),
 		IsModule#(m,a)) = mkAlteraStratixVMLAB_0l(depth);
+
+
+typedef function ActionValue#(t) f(UInt#(na) addr) ReadPort#(numeric type na,type t);
+
+module mkMultiReadZeroLatencyLookup#(Integer nread,Integer depth)(MultiReadLookup#(na,t))
+    provisos (
+        Bits#(t,nd));
+
+    ReadPort#(na,t) readPort[nread];
+
+    List#(Lookup#(na,t)) luts <- List::replicateM(nread,mkZeroLatencyLookup(depth));
+    for(Integer i=0;i<nread;i=i+1)
+        readPort[i] = luts[i].lookup;
+
+    method Action write(UInt#(na) addr,t data);
+        for(Integer i=0;i<nread;i=i+1)
+            luts[i].write(addr,data);
+    endmethod
+
+    interface Array lookup = readPort;
+endmodule
 
 endpackage

@@ -498,7 +498,7 @@ module top (
       brhalf <= 1'b0;
   end
 
-  assign ha_brad = {5'b0, brhalf};
+  assign `HA_ASSIGNMENT_DELAY ha_brad = {5'b0, brhalf};
 
   always @ (posedge ha_pclock) begin
     brdata_delay <= ah_brdata;

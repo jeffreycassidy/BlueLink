@@ -18,6 +18,12 @@ import AFUHardware::*;
 import Reserved::*;
 import BDPIPipe::*;
 
+import CmdBuf::*;
+import WriteBuf::*;
+
+import Cntrs::*;
+import Counter::*;
+
 import ShiftRegUnfunnel::*;
 
 import TagManager::*;
@@ -53,14 +59,9 @@ interface AFUToHostStream;
     // start the stream
     method Action start(UInt#(64) ea,UInt#(64) size);
     method Bool done;
-
-    // PSL interface
-    interface Client#(CacheCommand,CacheResponse)       cmd;
-    interface ServerARU#(BufferReadRequest,Bit#(512))   br;
-
-    // the outgoing stream
-    interface Put#(Bit#(1024)) ostream;
 endinterface
+
+
 
 
 /** Sinks a stream to host memory.
@@ -70,105 +71,79 @@ endinterface
  * Currently requires cache-aligned ea and size. 
  */
 
-module mkAFUToHostStream(AFUToHostStream)
+module mkAFUToHostStream#(CmdBufClientPort#(2) cmdbuf,PipeOut#(Bit#(1024)) pi)(AFUToHostStream)
     provisos (
         NumAlias#(nt,4));
 
     Integer stepBytes=128;
     Integer alignBytes=stepBytes;
 
-    // Manage the request tags
-    let mgr <- mkTagManager(Vector#(nt,RequestTag)'(genWith(fromInteger)),False);
-
-    // keep track of completion status
-    Vector#(nt,Reg#(Bool)) completed <- replicateM(mkReg(True));
-
     Reg#(UInt#(64)) eaStart   <- mkReg(0);
     Reg#(UInt#(64)) ea        <- mkReg(0);
     Reg#(UInt#(64)) eaEnd     <- mkReg(0);
 
-    FIFO#(CacheCommand) oCmd <- mkFIFO;
+    WriteBuf#(2) wbuf <- mkAFUWriteBuf(16);
 
-    WriteBuf#(2) wbuf <- mkAFUWriteBuf(4);
+    mkConnection(cmdbuf.buffer.writedata,wbuf.pslin);
 
-    PulseWire pwStart <- mkPulseWire;
+    Cntrs::Count#(UInt#(8)) outstanding <- mkCount(0);
+
+
+    // implicit conditions: value available from PipeOut
+    rule doWriteCommand if (ea != eaEnd);
+        // send command and get tag
+        let cmd = CmdWithoutTag {
+            com: Write_mi,
+            cabt: Abort,
+            cea: EAddress64 { addr: ea },
+            csize: fromInteger(stepBytes) };
+        let tag <- cmdbuf.putcmd(cmd);
+
+        // write data to buffer
+        wbuf.write(tag,pi.first);
+        pi.deq;
+
+        // bump write pointer
+        ea <= ea + fromInteger(stepBytes);
+        outstanding.incr(1);
+    endrule
+
+    rule handleResponse;
+        let resp <- cmdbuf.response.get;
+
+        case (resp.response) matches
+            Done:
+                $display($time," Write completion for tag %X",resp.rtag);
+   	        Paged:
+                $display($time," WARNING: PAGED response ignored for tag %X",resp.rtag);
+           
+            default:
+                action
+                    $display($time,"ERROR: Invalid command code received ",fshow(resp));
+                    dynamicAssert(False,"Invalid command code received");
+                endaction
+        endcase
+
+        outstanding.decr(1);
+    endrule
 
     method Action start(UInt#(64) ea0,UInt#(64) size);
         eaStart <= ea0;
         ea <= ea0;
         eaEnd <= ea0+size;
 
-        pwStart.send;
+        outstanding <= 0;
 
         dynamicAssert(ea0 % fromInteger(alignBytes) == 0,    "Effective address is not properly aligned");
         dynamicAssert(size % fromInteger(alignBytes) == 0,   "Transfer size is not properly aligned");
     endmethod
 
-    method Bool done = ea==eaEnd && foldl1( \&& , read(completed));
-
-    interface Client cmd;
-        interface Get request = toGet(oCmd);
-
-        interface Put response;
-            method Action put(CacheResponse r);
-                case (r.response) matches
-                    Done:
-                        action
-                            $display($time," Write completion for tag %X",r.rtag);
-                            completed[r.rtag] <= True;
-
-                            mgr.free(r.rtag);
-
-                            // TODO: Change this so we can restart cleanly?
-//                            dynamicAssert(!completed[r.rtag],"Completion received for unused tag");
-                        endaction
-					Paged:
-					action
-						completed[r.rtag] <= True;
-						mgr.free(r.rtag);
-						$display($time," WARNING: PAGED response ignored for tag %X",r.rtag);
-					endaction
-                        
-                    default:
-                        action
-                            $display($time,"ERROR: Invalid command code received ",fshow(r));
-                            dynamicAssert(False,"Invalid command code received");
-                        endaction
-                endcase
-                    // Aerror
-                    // Derror
-                    // Nlock
-                    // Nres
-                    // Flushed
-                    // Fault
-                    // Failed
-                    // Credit
-                    // Paged
-                    // Invalid
-            endmethod
-
-        endinterface
-    endinterface
-
-    interface ServerARU br;
-        interface Put request  = wbuf.pslin.request;
-        interface Get response = wbuf.pslin.response;
-    endinterface
-
-    interface Put ostream;
-        method Action put(Bit#(1024) i) if (ea != eaEnd && !pwStart);
-            // get tag and write data to buffer
-            let t <- mgr.acquire;
-            completed[t] <= False;
-            wbuf.write(t,i);
-
-            // enq command
-            let cmd = CacheCommand { com: Write_mi, ctag: t, cabt: Abort, cea: EAddress64 { addr: ea }, cch: 0, csize: fromInteger(stepBytes) };
-            oCmd.enq(cmd);
-            ea <= ea + fromInteger(stepBytes);
-        endmethod
-    endinterface
+    method Bool done = ea==eaEnd && outstanding == 0;
 endmodule
+
+
+
+
 
 module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUToHostWED,2));
     //// WED reg
@@ -187,14 +162,9 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
 
 
 
-
-	//// Stream consumer: fix endianness, unfunnel, reverse elements, and pack into 1024b vector
-//	PipeOut#(Vector#(1,Bit#(32))) iEndian <- mkFn_to_Pipe(compose(unpack,compose(pack,endianSwap)),pi);
-//    PipeOut#(Vector#(32,Bit#(32))) iUnFun <- mkUnfunnel(False,iEndian);
-//    PipeOut#(Bit#(1024)) stream <- mkFn_to_Pipe(compose(pack,reverse),iUnFun);
-
     PipeOut#(Bit#(1024)) stream <- mkShiftRegUnfunnel(Left,pi);
 
+    CacheCmdBuf#(1,2) cmdbuf <- mkCmdBuf(4);
 
 
     //// Host -> AFU stream controller
@@ -202,9 +172,7 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
     let pwStart <- mkPulseWire;
     let pwFinish <- mkPulseWire;
 
-    let streamctrl <- mkAFUToHostStream;
-
-	mkSink_to_fa(streamctrl.ostream.put,stream);
+    let streamctrl <- mkAFUToHostStream(cmdbuf.client[0],stream);
 
     FIFO#(void) ret <- mkFIFO1;
 
@@ -237,31 +205,15 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
 
     //// Command interface checking
 
-    ClientU#(CacheCommand,CacheResponse) cmd <- mkClientUFromClient(streamctrl.cmd);
-
-	Wire#(Bit#(512)) respW <- mkWire;
-
-	rule getBufferResponse;
-		respW <= streamctrl.br.response;
-	endrule
+    ClientU#(CacheCommand,CacheResponse) cmd <- mkClientUFromClient(cmdbuf.psl);
 
     FIFO#(MMIOResponse) mmResp <- mkFIFO1;
-
 
     interface SegmentedReg wedreg = wed;
 
     interface ClientU command = cmd;
 
-    interface AFUBufferInterface buffer;
-        interface ServerAFL writedata;
-			interface Put request;
-				method Action put(BufferReadRequest req) = streamctrl.br.request.put(req);
-			endinterface
-			interface ReadOnly response;
-				method Bit#(512) _read = respW;
-			endinterface
-		endinterface
-    endinterface
+    interface AFUBufferInterface buffer = cmdbuf.pslbuff;
 
     interface Server mmio;
         interface Get response = toGet(mmResp);

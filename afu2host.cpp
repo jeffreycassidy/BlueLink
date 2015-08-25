@@ -78,14 +78,16 @@ int main (int argc, char *argv[])
 
 	afu.mmio_write64(32,0);
 
+	cout << "Waiting for done signal from AFU" << endl;
 
-	const unsigned Nsleep=2;
+	const unsigned timeout=10;
 
-	cout << "AFU started, sleeping for " << Nsleep << " seconds" << endl;
+	unsigned d;
+	for(d=0; afu.mmio_read64(24) != 0x1111111111111111 && d < timeout; ++d)
+		sleep(1);
 
-	sleep(Nsleep);
-
-	cout << "Host code awake again, checking: " << endl;
+	if (d == timeout)
+		cout << "ERROR: AFU timed out after " << timeout << " seconds" << endl;
 
 	ofstream os("seq.received.out");
 

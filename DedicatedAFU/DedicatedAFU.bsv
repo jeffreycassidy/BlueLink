@@ -160,7 +160,7 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
 
     ServerARU#(MMIOCommand,MMIOResponse) mmSplit <- mkMMIOSplitter(mmCfg,afu.mmio,mmioAcceptPSA);
 
-    FIFOF#(CacheResponse) afuresp <- mkGFIFOF1(True,False);
+    FIFOF#(CacheResponse) afuresp <- mkGLFIFOF(True,False);
 
     mkConnection(toGet(afuresp),afu.command.response);
 

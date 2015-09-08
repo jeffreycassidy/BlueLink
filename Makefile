@@ -18,11 +18,11 @@ test-afu2host: work bsvlibs libs afu2host mkSyn_AFUToHost.v
 test-host2afu: work bsvlibs libs host2afu mkSyn_HostToAFU.v
 	vsim -do "source test_host2afu.tcl"
 
-mkSyn_AFUToHost.v: AFUToHostStream.bsv ReadBuf.bsv 
+mkSyn_AFUToHost.v: Test_AFUToHostStream.bsv AFUToHostStream.bsv ReadBuf.bsv CAPIStream.bsv
 	bsc $(BSC_VER_OPTS) -u $<
 	bsc $(BSC_VER_OPTS) -g mkSyn_AFUToHost -o $@ $<
 
-mkSyn_HostToAFU.v: Test_HostToAFUStream.bsv ReadBuf.bsv HostToAFUStream.bsv
+mkSyn_HostToAFU.v: Test_HostToAFUStream.bsv ReadBuf.bsv HostToAFUStream.bsv CAPIStream.bsv
 	bsc $(BSC_VER_OPTS) -u $<
 	bsc $(BSC_VER_OPTS) -g mkSyn_HostToAFU -o $@ $<
 	

@@ -13,7 +13,7 @@ test-ResourceManager: ResourceManager.bsv
 test-afu2host: work bsvlibs libs afu2host mkSyn_AFUToHost.v
 	xterm -hold -e "sleep 6; cd /home/jcassidy/src/CAPI/pslse/pslse; ./pslse"&
 	xterm -hold -e "sleep 8; ./afu2host"&
-	xterm -e 'vsim -do "source test_afu2host.tcl"'
+	vsim -do "source test_afu2host.tcl"&
 
 test-host2afu: work bsvlibs libs host2afu mkSyn_HostToAFU.v
 	vsim -do "source test_host2afu.tcl"

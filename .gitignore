@@ -24,3 +24,4 @@ work
 transcript
 *.dSYM
 modelsim.ini
+vsim_bluelink

@@ -10,6 +10,7 @@
 
 #include <utility>
 
+#include <array>
 #include <boost/range.hpp>
 
 /** Simplest possible WED container, just an opaque wrapper around a void*.

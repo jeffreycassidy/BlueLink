@@ -26,7 +26,7 @@ mkSyn_HostToAFU.v: Test_HostToAFUStream.bsv ReadBuf.bsv HostToAFUStream.bsv
 	bsc $(BSC_VER_OPTS) -u $<
 	bsc $(BSC_VER_OPTS) -g mkSyn_HostToAFU -o $@ $<
 	
-afu2host: afu2host.cpp *.hpp
+afu2host: afu2host.cpp Host/*.hpp
 	g++ -g -std=c++11 -m64 -fPIC -L$(PSLSE_CXL_DIR) -I$(PSLSE_CXL_DIR) -I$(BLUELINK) -o $@ $< -lcxl -lpthread
 
 host2afu: host2afu.cpp Host/*.hpp

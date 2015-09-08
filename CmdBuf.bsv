@@ -21,6 +21,11 @@ typedef struct {
     UInt#(12)               csize;
 } CmdWithoutTag deriving(Bits);
 
+instance FShow#(CmdWithoutTag);
+    function Fmt fshow(CmdWithoutTag c) = fshow("CmdWithoutTag ") + fshow(c.com) +
+        fshow(" cabt=") + fshow(c.cabt) + fshow(" addr=") + fshow(c.cea) + fshow(" csize=") + fshow(c.csize);
+endinstance
+
 function CacheCommand bindCommandToTag(RequestTag ctag, CmdWithoutTag cmd) = CacheCommand {
     com: cmd.com,
     cabt: cmd.cabt,
@@ -63,6 +68,8 @@ endinterface
  *
  *
  *  ntags       Number of available tags (manages tags 0..ntags-1)
+ *
+ * TODO: Handle error responses appropriately
  */
 
 
@@ -177,7 +184,11 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
                 case (resp.response) matches
                     Done:       tagMgr.unlock(resp.rtag);
                     default:
-                        dynamicAssert(False,"Invalid response type, don't know how to deal with it");
+                    action
+                        tagMgr.unlock(resp.rtag);
+                        $display($time," WARNING: freeing tag %d after response ",resp.rtag,fshow(resp));
+//                        dynamicAssert(False,"Invalid response type, don't know how to deal with it");
+                    endaction
                 endcase
             endmethod
         endinterface

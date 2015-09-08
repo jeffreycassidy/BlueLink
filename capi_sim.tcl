@@ -13,7 +13,7 @@ proc simcapi { tbname } {
     vlog -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+HA_ASSIGNMENT_DELAY=\#1 +define+BSV_ASSIGNMENT_DELAY=\#1 +define+DUTMODULETYPE=$tbname $BLUELINK/PSLVerilog/revwrap.v
 
 # Launch sim
-	vsim -t 1ns -L altera_mf_ver -L bsvlibs -pli $PSLSE_DRIVER_LIB top
+	vsim -t 1ns -L altera_mf_ver -L vsim_bluelink -L bsvlibs -pli $PSLSE_DRIVER_LIB top
 
 	add wave -noupdate /top/a0/afurev/ha_pclock
 	add wave -noupdate top/a0/afurev/RST_N

@@ -149,6 +149,7 @@ module mkHostToAFUStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf)(Tuple2#(S
     Vector#(2,Lookup#(na,Bit#(512))) rbufseg <- replicateM(mkZeroLatencyLookup(bufsize));
 
 
+    // *** REQUIRES -AGGRESSIVE-CONDITIONS  *** because of conditions on bufItemStatus[rdPtr]
     // If output is available (ie. current read buffer slot has valid data), enq it for output
 	rule outputIfAvailable;
 		// provide output, reversing 512b halflines to match Bluespec ordering convention
@@ -207,8 +208,9 @@ module mkHostToAFUStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf)(Tuple2#(S
 				completeTag <= resp.rtag;
 			default:
 			begin
-				$display($time,"ERROR: Invalid response type received ",fshow(resp));
-				dynamicAssert(False,"Invalid response type received");
+				$display($time,"ERROR: HostToAFUStream invalid response type received ",fshow(resp));
+                completeTag <= resp.rtag;
+//				dynamicAssert(False,"Invalid response type received");
 			end
 		endcase
 	endrule

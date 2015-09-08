@@ -41,6 +41,15 @@ module mkAFUToHostStream#(CmdBufClientPort#(2) cmdbuf,PipeOut#(Bit#(1024)) pi)(S
 
     Cntrs::Count#(UInt#(8)) outstanding <- mkCount(0);
 
+    Wire#(Tuple2#(UInt#(64),UInt#(64))) wStart <- mkWire;
+
+    (* preempts = "doStart, doWriteCommand" *)
+
+    rule doStart if (wStart matches { .ea0, .size });
+        eaCounterControl.start(ea0,size);
+        outstanding <= 0;
+    endrule
+
 
     rule doWriteCommand;
         // get next address
@@ -81,11 +90,7 @@ module mkAFUToHostStream#(CmdBufClientPort#(2) cmdbuf,PipeOut#(Bit#(1024)) pi)(S
         outstanding.decr(1);
     endrule
 
-    method Action start(UInt#(64) ea0,UInt#(64) size);
-        eaCounterControl.start(ea0,size);
-
-        outstanding <= 0;
-    endmethod
+    method Action start(UInt#(64) ea0,UInt#(64) size) if (eaCounterControl.done) = wStart._write(tuple2(ea0,size));
 
     method Bool done = eaCounterControl.done && outstanding == 0;
 endmodule

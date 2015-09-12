@@ -182,6 +182,7 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(b
                             begin
                                 $display($time,": ERROR - DedicatedAFU received unexpected command response while reading WED");
                                 $display($time,"    details: ",fshow(crp));
+                                pw_wed_done.send;       // <==== Added to prevent hangup in init sequence
                             end
 
                         Running:        afuresp.enq(cr);

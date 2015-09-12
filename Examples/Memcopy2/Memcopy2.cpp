@@ -66,15 +66,15 @@ int main(int argc,char **argv)
 	AFU afu(string("/dev/cxl/afu0.0d"));
 	afu.start(wed);
 
-    sleep(1);
+	for(unsigned i=0;i<4;++i)
+		cout << "PSA[" << setw(2) << 8*i << "]=" << setw(16) << afu.mmio_read64(8*i) << endl;
+
+    afu.print_details();
 
     cout << "Sending start pulse" << endl;
 
 	// launch the memcopy
 	afu.mmio_write64(32,0);
-
-	for(unsigned i=0;i<4;++i)
-		cout << "PSA[" << setw(2) << 8*i << "]=" << setw(16) << afu.mmio_read64(8*i) << endl;
 
 	// wait for finish
 	const unsigned timeout=15;

@@ -10,7 +10,7 @@ mkSyn_Memcopy2.v: Memcopy2.bsv
 	bsc -verilog $(BSC_VER_OPTS) -g mkSyn_Memcopy2 $<
 
 Memcopy2: Memcopy2.cpp
-	g++ -g -std=c++11 -m64 -fPIC -L$(PSLSE_CXL_DIR) -I$(PSLSE_CXL_DIR) -I$(BLUELINK) -o $@ $< -lcxl -lpthread
+	g++ -g -std=c++11 -m64 -fPIC -L$(PSLSE_CXL_DIR) -I$(PSLSE_CXL_DIR) -I$(BLUELINK) $(HARDWARE_DEF) -o $@ $< -lcxl -lpthread
 
 test-Memcopy2: Memcopy2 mkSyn_Memcopy2.v work
 	xterm -hold -e "sleep 6; cd /home/jcassidy/src/CAPI/pslse/pslse; ./pslse"&

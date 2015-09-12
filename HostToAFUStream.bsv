@@ -253,6 +253,8 @@ module mkHostToAFUStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf,EndianPoli
         endrule
 	end
 
+    FIFO#(Tuple3#(UInt#(6),UInt#(na),Bit#(512))) bwReg <- mkPipelineFIFO;
+
     // handle buffer writes
     (* fire_when_enabled *) 
     rule bufWrite;
@@ -268,9 +270,16 @@ module mkHostToAFUStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf,EndianPoli
                 idx = tagged Valid fromInteger(i);
 
         if (idx matches tagged Valid .i)
-            rbufseg[addr].write(i, data);
+            bwReg.enq(tuple3(addr,i,data));
         else
             dynamicAssert(False,"Received data for tag not currently in use");
+    endrule
+
+    // sink buffer writes requests to the read buffer
+    rule bufWriteFinalize;
+        let { addr, i, data } = bwReg.first;
+        rbufseg[addr].write(i, data);
+        bwReg.deq;
     endrule
 
     return tuple2(

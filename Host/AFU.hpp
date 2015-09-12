@@ -178,12 +178,7 @@ void AFU::start(const WED& w)
 void AFU::mmio_map()
 {
 	int ret;
-#ifdef HARDWARE
-	//cxl_install_sigbus_handler();
-	if ((ret=cxl_mmio_map(afu_h_,CXL_MMIO_FLAGS_AFU_HOST_ENDIAN)))
-#else
 	if ((ret=cxl_mmio_map(afu_h_,CXL_MMIO_BIG_ENDIAN)))
-#endif
 	{
 		cerr << "cxl_mmio_map failed with error code: " << ret << endl;
 		cerr << "  strerror(errno): " << strerror(errno) << endl;

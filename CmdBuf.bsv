@@ -78,16 +78,20 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
         NumAlias#(natag,8),
         NumAlias#(naclient,TLog#(n)),      // maximum number of clients
         Add#(1,__some,brlat),
+        Alias#(UInt#(4),clientIndex),
         Bits#(RequestTag,nbtag));
 
     // last issued command for each tag, and the client who issued the command
-    Lookup#(natag,CmdWithoutTag)    tagCmdHist      <- mkZeroLatencyLookup(ntags);
-    Lookup#(natag,UInt#(naclient))         tagClientMap    <- mkZeroLatencyLookup(ntags);      // duplicate for multiple lookups
-    Lookup#(natag,UInt#(naclient))         tagClientMap1   <- mkZeroLatencyLookup(ntags);
-    Lookup#(natag,UInt#(naclient))         tagClientMap2   <- mkZeroLatencyLookup(ntags);
+    // wire carries responses with client index and response
+    Lookup#(nbtag,CmdWithoutTag)                tagCmdHist   <- mkZeroLatencyLookup(ntags);
+
+    MultiReadLookup#(nbtag,clientIndex)         tagClientMap <- mkMultiReadZeroLatencyLookup(3,ntags);
 
     // wire carries responses with client index and response
-    Wire#(Tuple2#(UInt#(naclient),Response)) respWire <- mkWire;
+    FIFO#(Tuple2#(clientIndex,Response)) respWire <- mkBypassFIFO;
+
+
+    // wire carries responses with client index and response
 
     // tag manager keeps track of which tags are available
     ResourceManager#(nbtag) tagMgr <- mkResourceManager(ntags,False,True);
@@ -98,11 +102,11 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
 
     Vector#(n,CmdBufClientPort#(brlat)) clientP;
 
-    Wire#(Tuple2#(UInt#(naclient), BufferWrite))        bwWire <- mkWire;
-    RWire#(Tuple2#(UInt#(naclient),BufferReadRequest))  brWire <- mkRWire;
-    Wire#(Bit#(512))                                    brData <- mkWire;
+    Wire#(Tuple2#(clientIndex,BufferWrite))         bwWire <- mkWire;
+    RWire#(Tuple2#(clientIndex,BufferReadRequest))  brWire <- mkRWire;
+    Wire#(Bit#(512))                                brData <- mkWire;
 
-    Reg#(Vector#(brlat,Maybe#(UInt#(naclient))))   brClDelay <- mkReg(replicate(tagged Invalid));
+    Reg#(Vector#(brlat,Maybe#(clientIndex)))        brClDelay <- mkReg(replicate(tagged Invalid));
 
     (* fire_when_enabled, no_implicit_conditions *)
     rule brlatDelay;
@@ -130,8 +134,6 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
                 dynamicAssert(t < fromInteger(ntags),"Invalid tag specified");
                 tagCmdHist.write(truncate(t),cmd);
                 tagClientMap.write(truncate(t),fromInteger(i));
-                tagClientMap1.write(truncate(t),fromInteger(i));
-                tagClientMap2.write(truncate(t),fromInteger(i));
 
                 // enq command to output
                 oCmd.enq(bindCommandToTag(t,cmd));
@@ -140,8 +142,10 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
             endmethod
 
             interface Get response;
-                method ActionValue#(Response) get if (respWire matches { .cl, .resp } &&& cl == fromInteger(i)) =
-                    actionvalue return resp; endactionvalue;
+                method ActionValue#(Response) get if (respWire.first matches { .cl, .resp } &&& cl == fromInteger(i));
+                    respWire.deq;
+                    return resp;
+                endmethod
             endinterface
 
             interface PSLBufferInterface buffer;
@@ -177,8 +181,8 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
                 dynamicAssert(resp.rtag < fromInteger(ntags),"Invalid tag specified");
 
                 // steer towards the requesting client whether the downstream module consumes it or not
-                let cl <- tagClientMap.lookup(truncate(resp.rtag));
-                respWire <= tuple2(cl, Response { rtag: resp.rtag, response: resp.response, rcredits: resp.rcredits });
+                let cl <- tagClientMap.lookup[0](truncate(resp.rtag));
+                respWire.enq(tuple2(cl, Response { rtag: resp.rtag, response: resp.response, rcredits: resp.rcredits }));
 
                 // update internal state
                 case (resp.response) matches
@@ -199,7 +203,7 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
             interface Put request;
                 method Action put(BufferReadRequest br);
                     // look up which client made the request, forward to the wire
-                    let cl <- tagClientMap2.lookup(truncate(br.brtag));
+                    let cl <- tagClientMap.lookup[1](truncate(br.brtag));
                     brWire.wset(tuple2(cl,br));
                 endmethod
             endinterface
@@ -211,7 +215,7 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
 
         interface Put readdata;
             method Action put(BufferWrite bw);
-                let cl <- tagClientMap1.lookup(truncate(bw.bwtag));
+                let cl <- tagClientMap.lookup[2](truncate(bw.bwtag));
                 bwWire <= tuple2(cl, bw);
             endmethod
         endinterface

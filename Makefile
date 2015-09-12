@@ -59,3 +59,7 @@ bsvlibs:
 
 libs:
 	for i in $(SUBDIRS); do make -C $$i libs; done
+
+remote-sync:
+	rsync -rizt Host stac:~/jcassidy/BlueLink
+	rsync -rizt --include=Makefile --include=*.?pp Examples/Memcopy2 stac:~/jcassidy/Examples

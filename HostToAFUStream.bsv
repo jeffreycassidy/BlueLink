@@ -17,6 +17,8 @@ import RevertingVirtualReg::*;
 
 import BLProgrammableLUT::*;
 
+import Endianness::*;
+
 import ReadBuf::*;
 
 import CAPIStream::*;
@@ -106,6 +108,10 @@ endmodule
 
 /** Module to stream data from the host, using multiple parallel in-flight tags and a ring buffer.
  * 
+ * *** REQUIRES COMPILATION WITH -aggressive-conditions ***
+ * 
+ * For argument descriptions, see AFUToHostStream
+ *
  * Issues commands when able on the supplied CmdBufClientPort. For each tag, when granted:
  *
  *  Marks next buffer slot as FetchIssued and saves the tag ID
@@ -127,7 +133,8 @@ endmodule
  * TODO: Graceful reset logic
  */
 
-module mkHostToAFUStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf)(Tuple2#(StreamControl,PipeOut#(Bit#(1024))))
+module mkHostToAFUStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf,EndianPolicy endianPolicy)
+    (Tuple2#(StreamControl,PipeOut#(Bit#(1024))))
     provisos (
 		NumAlias#(na,6)         // Number of address bits
     );
@@ -153,9 +160,14 @@ module mkHostToAFUStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf)(Tuple2#(S
     // If output is available (ie. current read buffer slot has valid data), enq it for output
 	rule outputIfAvailable;
 		// provide output, reversing 512b halflines to match Bluespec ordering convention
+        // CAPI: little-endian (high index/MSB -> high address); BSV: big-endian (high index/MSB -> low address)
 		let l <- rbufseg[1].lookup(rdPtr);
 		let u <- rbufseg[0].lookup(rdPtr);
-		oData.enq( { u, l });
+
+        case (endianPolicy) matches
+            HostNative: oData.enq( { u,l });
+            EndianSwap: oData.enq( endianSwap({ u,l }));
+        endcase
 
 		// mark used and bump read pointer
 		bufItemStatus[rdPtr].pop;                       // implicit condition: can only pop if data valid
@@ -210,7 +222,6 @@ module mkHostToAFUStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf)(Tuple2#(S
 			begin
 				$display($time,"ERROR: HostToAFUStream invalid response type received ",fshow(resp));
                 completeTag <= resp.rtag;
-//				dynamicAssert(False,"Invalid response type received");
 			end
 		endcase
 	endrule
@@ -219,9 +230,9 @@ module mkHostToAFUStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf)(Tuple2#(S
 		$display($time,": ERROR - No one ack'd the completion for tag ",fshow(completeTag));
 	endrule
 
-//    // The two repeated rules below are split to avoid the need for the -aggressive-conditions argument
-//    // otherwise the rule would carry implicit conditions that ALL buffer items must be ready
-//    // fire_when_enabled is specified because there is no fall-through mechanism if the data or completion isn't dealt with here
+    // The two repeated rules below are split to avoid the need for the -aggressive-conditions argument
+    // otherwise the rule would carry implicit conditions that ALL buffer items must be ready
+    // fire_when_enabled is specified because there is no fall-through mechanism if the data or completion isn't dealt with here
 
     List#(RWire#(RequestTag)) tags <- List::replicateM(bufsize,mkRWire);
 

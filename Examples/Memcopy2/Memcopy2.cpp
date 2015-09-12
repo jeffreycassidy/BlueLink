@@ -16,10 +16,13 @@
 
 #include <BlueLink/Host/aligned_allocator.hpp>
 
+/** Struct must be packed in reverse element order wrt. Bluespec struct to facilitate endian conversion. */
+
 struct MemcopyWED {
 	const uint64_t*	pSrc;
 	uint64_t*		pDst;
 	uint64_t		size;
+	uint64_t		pad[13];
 };
 
 int main(int argc,char **argv)
@@ -32,7 +35,6 @@ int main(int argc,char **argv)
 	vector<uint64_t,aligned_allocator<uint64_t,128>> src(N,0),dst(3*N,0);
 	const uint64_t* pSrc = src.data();
 	uint64_t* pDst = dst.data()+N;
-
 
 	// create WED
 	StackWED<MemcopyWED,128> wed;
@@ -50,6 +52,8 @@ int main(int argc,char **argv)
 	assert(boost::align::is_aligned(128,pWED);
 	assert(boost::align::is_aligned(128,Nb);
 	cout << "Alignment OK" << endl;
+#else
+#warning "Alignment checks bypassed due to missing boost::align"
 #endif
 
 	// generate random data

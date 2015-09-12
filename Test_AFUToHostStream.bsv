@@ -20,44 +20,43 @@ import AFUHardware::*;
 import Reserved::*;
 import BDPIPipe::*;
 
+import Endianness::*;
+
 import AFUToHostStream::*;
 
 import ShiftRegUnfunnel::*;
 
-typedef struct { UInt#(64) addr; } EAddress64LE deriving(Eq);
-
-function Bit#(n) endianSwap(Bit#(n) i) provisos (Mul#(nbytes,8,n),Div#(n,8,nbytes),Log#(nbytes,k));
-    Vector#(nbytes,Bit#(8)) t = toChunks(i);
-    return pack(reverse(t));
-endfunction
-
-instance Bits#(EAddress64LE,64);
-    function Bit#(64) pack(EAddress64LE i) = endianSwap(pack(i.addr));
-    function EAddress64LE unpack(Bit#(64) b) = EAddress64LE { addr: unpack(endianSwap(b)) };
-endinstance
+/** Define WED for HostNative (little-endian) cache line ordering; requires endian swap of each element but leaves struct elements
+ * in forward order.
+ *
+ * Corresponding C/C++ struct is 
+ *
+ * struct WED {
+ *      void*    p;
+ *      uint64_t size;
+ *      uint64_t pad[14];
+ * };
+ */
 
 typedef struct {
-    EAddress64LE        eaDst;
-    EAddress64LE        size;
+    LittleEndian#(EAddress64)        eaDst;
+    LittleEndian#(EAddress64)        size;
 
     ReservedZero#(128)  padA;
 
     ReservedZero#(256)  padB;
 
-
-
     ReservedZero#(512)  padC;
 } AFUToHostWED deriving(Bits,Eq);
 
 
-module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUToHostWED,2));
+module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(2));
     //// WED reg
-    SegReg#(AFUToHostWED,2,512) wed <- mkSegReg(unpack(?));
-
+    SegReg#(AFUToHostWED,2,512) wedreg <- mkSegReg(HostNative,unpack(?));
+    AFUToHostWED wed = wedreg.entire;
 
 
     //// Reset controller
-
     Stmt rststmt = seq
         noAction;
         $display($time," INFO: AFU Reset FSM completed");
@@ -66,8 +65,9 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
     FSM rstfsm <- mkFSM(rststmt);
 
 
-
-    PipeOut#(Bit#(1024)) stream <- mkShiftRegUnfunnel(Left,pi);
+    
+    // unfunnel 32b words into 1024b cache lines; shift rightwards to put low-order elements at lower addresses
+    PipeOut#(Bit#(1024)) stream <- mkShiftRegUnfunnel(Right,pi);
 
     CacheCmdBuf#(1,2) cmdbuf <- mkCmdBuf(4);
 
@@ -77,12 +77,16 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
     let pwStart <- mkPulseWire;
     let pwFinish <- mkPulseWire;
 
-    let streamctrl <- mkAFUToHostStream(cmdbuf.client[0],stream);
+    let streamctrl <- mkAFUToHostStream(16,cmdbuf.client[0],EndianSwap,stream);
 
     FIFO#(void) ret <- mkFIFO1;
 
     Reg#(Bool) streamDone <- mkReg(False);
     Reg#(Bool) masterDone <- mkReg(False);
+
+    // unpack the WED
+    EAddress64 size  = unpackle(wed.size);
+    EAddress64 eaDst = unpackle(wed.eaDst);
 
     Stmt ctlstmt = seq
         masterDone <= False;
@@ -90,9 +94,9 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
         await(pwStart);
         action
             $display($time," INFO: AFU Master FSM starting");
-            $display($time,"      Size:          %016X",wed.entire.size.addr);
-            $display($time,"      Start address: %016X",wed.entire.eaDst.addr);
-            streamctrl.start(wed.entire.eaDst.addr,wed.entire.size.addr);
+            $display($time,"      Size:          %016X",size);
+            $display($time,"      Start address: %016X",eaDst);
+            streamctrl.start(eaDst.addr,size.addr);
         endaction
         action
             await(streamctrl.done);
@@ -114,7 +118,7 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
 
     FIFO#(MMIOResponse) mmResp <- mkFIFO1;
 
-    interface SegmentedReg wedreg = wed;
+    interface Vector wedwrite = map(regToWriteOnly,wedreg.seg);
 
     interface ClientU command = cmd;
 
@@ -138,8 +142,8 @@ module mkAFU_AFUToHostStream#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(AFUTo
                 else if (i matches tagged DWordRead { index: .dwi })
                     case (dwi) matches
                         0:          mmResp.enq(tagged DWordData 64'h0123456700f00d00);
-                        1:          mmResp.enq(tagged DWordData pack(wed.entire.eaDst.addr));
-                        2:          mmResp.enq(tagged DWordData pack(wed.entire.size.addr));
+                        1:          mmResp.enq(tagged DWordData pack(eaDst.addr));
+                        2:          mmResp.enq(tagged DWordData pack(size.addr));
                         3:          mmResp.enq(tagged DWordData (streamDone ? 64'h1111111111111111 : 64'h0));
                         4:          mmResp.enq(tagged DWordData (masterDone ? 64'hf00ff00ff00ff00f : 64'h1));
                         default:    mmResp.enq(tagged DWordData 0);

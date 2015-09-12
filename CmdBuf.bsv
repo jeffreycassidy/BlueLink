@@ -75,19 +75,19 @@ endinterface
 
 module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
     provisos (
-        NumAlias#(ntag,16),
-        NumAlias#(natag,4),
+        NumAlias#(natag,8),
+        NumAlias#(naclient,TLog#(n)),      // maximum number of clients
         Add#(1,__some,brlat),
         Bits#(RequestTag,nbtag));
 
     // last issued command for each tag, and the client who issued the command
     Lookup#(natag,CmdWithoutTag)    tagCmdHist      <- mkZeroLatencyLookup(ntags);
-    Lookup#(natag,UInt#(4))         tagClientMap    <- mkZeroLatencyLookup(ntags);      // duplicate for multiple lookups
-    Lookup#(natag,UInt#(4))         tagClientMap1   <- mkZeroLatencyLookup(ntags);
-    Lookup#(natag,UInt#(4))         tagClientMap2   <- mkZeroLatencyLookup(ntags);
+    Lookup#(natag,UInt#(naclient))         tagClientMap    <- mkZeroLatencyLookup(ntags);      // duplicate for multiple lookups
+    Lookup#(natag,UInt#(naclient))         tagClientMap1   <- mkZeroLatencyLookup(ntags);
+    Lookup#(natag,UInt#(naclient))         tagClientMap2   <- mkZeroLatencyLookup(ntags);
 
     // wire carries responses with client index and response
-    Wire#(Tuple2#(UInt#(natag),Response)) respWire <- mkWire;
+    Wire#(Tuple2#(UInt#(naclient),Response)) respWire <- mkWire;
 
     // tag manager keeps track of which tags are available
     ResourceManager#(nbtag) tagMgr <- mkResourceManager(ntags,False,True);
@@ -98,11 +98,11 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
 
     Vector#(n,CmdBufClientPort#(brlat)) clientP;
 
-    Wire#(Tuple2#(UInt#(natag),BufferWrite))  bwWire <- mkWire;
-    RWire#(Tuple2#(UInt#(natag),BufferReadRequest))  brWire <- mkRWire;
-    Wire#(Bit#(512))                            brData <- mkWire;
+    Wire#(Tuple2#(UInt#(naclient), BufferWrite))        bwWire <- mkWire;
+    RWire#(Tuple2#(UInt#(naclient),BufferReadRequest))  brWire <- mkRWire;
+    Wire#(Bit#(512))                                    brData <- mkWire;
 
-    Reg#(Vector#(brlat,Maybe#(UInt#(natag))))   brClDelay <- mkReg(replicate(tagged Invalid));
+    Reg#(Vector#(brlat,Maybe#(UInt#(naclient))))   brClDelay <- mkReg(replicate(tagged Invalid));
 
     (* fire_when_enabled, no_implicit_conditions *)
     rule brlatDelay;

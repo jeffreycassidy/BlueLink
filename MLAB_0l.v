@@ -36,7 +36,7 @@
 // synopsys translate_off
 `timescale 1 ps / 1 ps
 // synopsys translate_on
-module MLAB_0l#(parameter integer DWIDTH=20,parameter integer AWIDTH=5,parameter integer DEPTH=32)(
+module MLAB_0l#(parameter integer DWIDTH=20,parameter integer AWIDTH=5,parameter AUSED=5,parameter integer DEPTH=32)(
 	clock,
 	data,
 	rdaddress,
@@ -66,10 +66,10 @@ module MLAB_0l#(parameter integer DWIDTH=20,parameter integer AWIDTH=5,parameter
 	altdpram	altdpram_component (
 				.data (data),
 				.outclock (clock),
-				.rdaddress (rdaddress),
+				.rdaddress (rdaddress[AUSED-1:0]),
 				.wren (wren),
 				.inclock (clock),
-				.wraddress (wraddress),
+				.wraddress (wraddress[AUSED-1:0]),
 				.q (sub_wire0),
 				.aclr (1'b0),
 				.byteena (1'b1),
@@ -93,7 +93,7 @@ module MLAB_0l#(parameter integer DWIDTH=20,parameter integer AWIDTH=5,parameter
 		altdpram_component.rdcontrol_reg = "UNREGISTERED",
 		altdpram_component.read_during_write_mode_mixed_ports = "CONSTRAINED_DONT_CARE",
 		altdpram_component.width = DWIDTH,
-		altdpram_component.widthad = AWIDTH,
+		altdpram_component.widthad = AUSED,
 		altdpram_component.width_byteena = 1,
 		altdpram_component.wraddress_aclr = "OFF",
 		altdpram_component.wraddress_reg = "INCLOCK",

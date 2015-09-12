@@ -1,0 +1,63 @@
+Cache lines are 1024b / 128B long, which gives an alignment multiple of 0x80
+
+When transferring over the CAPI link,
+
+bwad == 0 -> bwdata contains the halfline at the lower  address (offset +0x00)
+bwad == 1 ->                                     higher address (offset +0x40)
+
+{ bwdata[0], bwdata[1] } give the cache line as a big-endian 1024b word
+
+Note: this is reversed wrt Bluespec's big-endian ordering of Vector#(2,Bit#(512)), which places bwdata[1] at MSB
+
+
+
+Methods of packing data for transmission to the AFU
+
+
+1. Provide plain old C/C++ struct, endian reverse per element
+
+struct {
+	TypeA a;
+	TypeB b;
+	TypeC c;
+	...   pad;
+}
+
+On the host, elements will appear in normal order of ascending memory address { a,b,c }. Any multi-byte elements will be in
+little-endian order.
+
+When transferred to the AFU, they will appear in the same order from left to right, so bluespec unpack() can be used without
+reversing the element order. However, multi-byte values will be in little-endian order, requiring an endian switch before they
+are used in the AFU.
+
+
+2. Provide plain old C/C++ struct with reversed element order (including pads), and byte-reverse the entire cache line
+
+struct {
+	...	  pad;
+	TypeC c;
+	TypeB b;
+	TypeA a;
+}
+
+
+Byte-reversing the entire cache line will take care of the endianness problem. Struct elements must be in reverse order in host
+code wrt. ordering in BSV code.
+
+
+
+
+3. Use BDPIBitPacker, byte-reverse the entire cache line
+
+BDPIAutoArrayBitPacker P(Nb);
+P & a & b & c;
+
+The packer will store Nb bits in little-endian order in memory. The MSB will go in the highest address. The elements' bytes will
+appear in memory in reverse order { c, b, a}.
+
+When transferred to the AFU, the MS byte will be at the right since cache lines are transferred in big-endian order. After reversing
+the 128-byte vector, { a, b, c} will be in normal left-to-right order, and all elements will have correct endianness.
+
+Currently, it is left to the AFU to do byte-reversing since this is less costly (free) there.
+
+NOTE: This works up to cache-line granularity. Values exceeding 1024b in length probably need to be handled differently.

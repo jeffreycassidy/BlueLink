@@ -12,12 +12,21 @@ import Cntrs::*;
 
 import CAPIStream::*;
 
-
+import Endianness::*;
 
 /** Module to sink a stream to host memory, using multiple parallel in-flight tags and a ring buffer.
  * 
  * Issues commands when able on the supplied CmdBufClientPort.
  *
+ * Arguments
+ *      cmdbuf          A command buffer port to accept the issued commands
+ *      endianPolicy    Specification for how to handle the incoming 1024b cache line
+ *                          HostNative: place little-endian 1024b word directly in memory (MSByte pi[1023:1015] -> ea + 0x7f)
+ *                          EndianSwap: byte-reverse the line (MSByte pi[1023:1015] -> ea + 0x00)
+ *      pi              The incoming pipe to send to host
+ *
+ * In HostNative (LE) mode, vectors should have the high index at right
+ * For EndianSwap (BE) mode, vectors should position the high index at left as is standard in Bluespec pack()
  *
  * The user starts the transfer by providing an address and a size, then is able to push (size) bytes to the host in 1024b chunks.
  *
@@ -27,7 +36,7 @@ import CAPIStream::*;
  * TODO: Graceful reset logic
  */
 
-module mkAFUToHostStream#(CmdBufClientPort#(2) cmdbuf,PipeOut#(Bit#(1024)) pi)(StreamControl)
+module mkAFUToHostStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf,EndianPolicy endianPolicy,PipeOut#(Bit#(1024)) pi)(StreamControl)
     provisos (
         NumAlias#(nt,4));
     
@@ -64,7 +73,11 @@ module mkAFUToHostStream#(CmdBufClientPort#(2) cmdbuf,PipeOut#(Bit#(1024)) pi)(S
         let tag <- cmdbuf.putcmd(cmd);          // implicit condition: able to put a command
 
         // write data to buffer in tag slot
-        wbuf.write(tag,pi.first);
+        wbuf.write(tag,
+            case (endianPolicy) matches
+                HostNative: pi.first;
+                EndianSwap: endianSwap(pi.first);
+            endcase);
         pi.deq;                                 // implicit condition: input value in the pipe
 
         // bump write pointer

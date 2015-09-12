@@ -12,6 +12,8 @@ import DedicatedAFU::*;
 import Clocks::*;
 import AFUHardware::*;
 
+import Common::*;
+
 import CmdBuf::*;
 
 import BDPIPipe::*;
@@ -20,36 +22,30 @@ import MMIO::*;
 
 import Reserved::*;
 
-typedef struct { UInt#(64) addr; } EAddress64LE deriving(Eq);
+import Endianness::*;
 
-function Bit#(n) endianSwap(Bit#(n) i) provisos (Mul#(nbytes,8,n),Div#(n,8,nbytes),Log#(nbytes,k));
-    Vector#(nbytes,Bit#(8)) t = toChunks(i);
-    return pack(reverse(t));
-endfunction
-
-instance Bits#(EAddress64LE,64);
-    function Bit#(64) pack(EAddress64LE i) = endianSwap(pack(i.addr));
-    function EAddress64LE unpack(Bit#(64) b) = EAddress64LE { addr: unpack(endianSwap(b)) };
-endinstance
+/** Define WED for EndianSwap (big-endian) cache line ordering; no endian swap needed for each element, but struct elements appear
+ * reversed in BSV code vs C/C++
+ */
 
 typedef struct {
-    EAddress64LE        eaSrc;
-    EAddress64LE        size;
-
+    ReservedZero#(512)  padC;
+    ReservedZero#(256)  padB;
     ReservedZero#(128)  padA;
 
-    ReservedZero#(256)  padB;
 
-
-
-    ReservedZero#(512)  padC;
+    EAddress64        size;
+    EAddress64        eaSrc;
 } HostToAFUWED deriving(Bits,Eq);
 
 import FIFO::*;
 
-module mkAFU_HostToAFUStream(Tuple2#(DedicatedAFUNoParity#(HostToAFUWED,2),PipeOut#(UInt#(64))));
+module mkAFU_HostToAFUStream(Tuple2#(DedicatedAFUNoParity#(2),PipeOut#(UInt#(64))));
     //// WED reg
-    SegReg#(HostToAFUWED,2,512) wed <- mkSegReg(unpack(?));
+    SegReg#(HostToAFUWED,2,512) wedreg <- mkSegReg(EndianSwap,unpack(?));
+    HostToAFUWED wed = wedreg.entire;
+
+    Reg#(Bool) streamDone <- mkReg(False);
 
 
 
@@ -57,6 +53,7 @@ module mkAFU_HostToAFUStream(Tuple2#(DedicatedAFUNoParity#(HostToAFUWED,2),PipeO
 
     Stmt rststmt = seq
         noAction;
+        streamDone <= False;
         $display($time," INFO: AFU Reset FSM completed");
     endseq;
     
@@ -74,19 +71,23 @@ module mkAFU_HostToAFUStream(Tuple2#(DedicatedAFUNoParity#(HostToAFUWED,2),PipeO
 
     //// Host -> AFU stream controller
 
-    let { streamctrl, istream }  <- mkHostToAFUStream(4,cmdbuf.client[0]);
+    let { streamctrl, istream }  <- mkHostToAFUStream(4,cmdbuf.client[0],EndianSwap);
+
+    let pwFinish <- mkPulseWire;
 
     FIFO#(void) ret <- mkFIFO1;
 
     Stmt ctlstmt = seq
         action
             $display($time," INFO: AFU Master FSM starting");
-            $display($time,"      Size:          %016X",wed.entire.eaSrc.addr);
-            $display($time,"      Start address: %016X",wed.entire.size.addr);
-            streamctrl.start(wed.entire.eaSrc.addr,wed.entire.size.addr);
+            $display($time,"      Size:          %016X",wed.eaSrc.addr);
+            $display($time,"      Start address: %016X",wed.size.addr);
+            streamctrl.start(wed.eaSrc.addr,wed.size.addr);
         endaction
         await(streamctrl.done);
+        streamDone <= True;
         $display($time," INFO: AFU Master FSM copy complete");
+        await(pwFinish);
         ret.enq(?);
     endseq;
 
@@ -95,10 +96,12 @@ module mkAFU_HostToAFUStream(Tuple2#(DedicatedAFUNoParity#(HostToAFUWED,2),PipeO
 
 
     //// Stream consumer
-
+    
     PipeOut#(Vector#(16,Bit#(64))) t <- mkFn_to_Pipe(unpack,istream);
-    PipeOut#(Vector#(16,Bit#(64))) tr <- mkFn_to_Pipe(reverse,t);
-    PipeOut#(Vector#(1,Bit#(64))) oFun <- mkFunnel(tr);
+
+    // funnel yields right (low-index) bits first
+    // in EndianSwap mode, low index <-> low address
+    PipeOut#(Vector#(1,Bit#(64))) oFun <- mkFunnel(t);
 
     PipeOut#(UInt#(64)) o <- mkFn_to_Pipe(compose(unpack,pack),oFun);
 
@@ -106,22 +109,41 @@ module mkAFU_HostToAFUStream(Tuple2#(DedicatedAFUNoParity#(HostToAFUWED,2),PipeO
 
     //// Command interface checking
 
-    DedicatedAFUNoParity#(HostToAFUWED,2) afu = interface DedicatedAFUNoParity
+    FIFO#(MMIOResponse) mmResp <- mkFIFO1;
+
+    DedicatedAFUNoParity#(2) afu = interface DedicatedAFUNoParity
     
-        interface SegmentedReg wedreg = wed;
+        interface Vector wedwrite = map(regToWriteOnly,wedreg.seg);
     
         interface ClientU command = cmdbufu;
     
         interface AFUBufferInterface buffer = cmdbuf.pslbuff;
     
-    // no MMIO support
         interface Server mmio;
-            interface Get response;
-                method ActionValue#(MMIOResponse) get if (False) = actionvalue return ?; endactionvalue;
-            endinterface
+            interface Get response = toGet(mmResp);
     
             interface Put request;
-                method Action put (MMIORWRequest i) = noAction;
+                method Action put (MMIORWRequest i);
+                    if (i matches tagged DWordWrite { index: .dwi, data: .dwd })
+                    begin
+                        case (dwi) matches
+                            5: pwFinish.send;
+                            default: noAction;
+                        endcase
+    
+                        mmResp.enq(WriteAck);
+                    end
+                    else if (i matches tagged DWordRead { index: .dwi })
+                        case (dwi) matches
+                            0:          mmResp.enq(tagged DWordData 64'h0123456700f00d00);
+                            1:          mmResp.enq(tagged DWordData pack(wed.eaSrc.addr));
+                            2:          mmResp.enq(tagged DWordData pack(wed.size.addr));
+                            3:          mmResp.enq(tagged DWordData (streamDone ? 64'h1111111111111111 : 64'h0));
+                            default:    mmResp.enq(tagged DWordData 0);
+                        endcase
+                    else
+                        mmResp.enq(WriteAck);           // just ack word read/write
+                endmethod
             endinterface
     
         endinterface
@@ -155,13 +177,11 @@ module mkSyn_HostToAFU(AFUHardware#(2));
     let { dut, oPipe } <- mkAFU_HostToAFUStream;
     let wrap <- mkDedicatedAFUNoParity(False,False,dut);
 
-    PipeOut#(UInt#(64)) oPipeR <- mkFn_to_Pipe(compose(unpack,compose(endianSwap,pack)),oPipe);
-
 	Reg#(UInt#(32)) p <- mkReg(0);
 
 	rule showOutput;
-		oPipeR.deq;
-		$display($time,"Output [%08X]: %016X",p,oPipeR.first);
+		oPipe.deq;
+		$display($time,"Output [%08X]: %016X",p,oPipe.first);
 		p <= p+8;
 	endrule
 

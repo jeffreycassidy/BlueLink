@@ -16,7 +16,9 @@ test-afu2host: work bsvlibs libs afu2host mkSyn_AFUToHost.v
 	vsim -do "source test_afu2host.tcl"&
 
 test-host2afu: work bsvlibs libs host2afu mkSyn_HostToAFU.v
-	vsim -do "source test_host2afu.tcl"
+	xterm -hold -e "sleep 6; cd /home/jcassidy/src/CAPI/pslse/pslse; ./pslse"&
+	xterm -hold -e "sleep 8; ./host2afu"&
+	vsim -do "source test_host2afu.tcl"&
 
 mkSyn_AFUToHost.v: Test_AFUToHostStream.bsv AFUToHostStream.bsv ReadBuf.bsv CAPIStream.bsv
 	bsc $(BSC_VER_OPTS) -u $<

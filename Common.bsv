@@ -29,6 +29,13 @@ instance Readable#(ReadOnly#(t),t);
 endinstance
 
 
+/** Conversion to WriteOnly */
+
+function WriteOnly#(t) regToWriteOnly(Reg#(t) r) = interface WriteOnly;
+    method Action _write(t i) = r._write(i);
+endinterface;
+
+
 /** Get/Put instances for registers with data wrapped in Maybe#(); useful typically for DReg.
  */
 
@@ -47,6 +54,5 @@ endinstance
 function ReadOnly#(t) readIfValid(Maybe#(t) o) = interface ReadOnly;
     method t _read if (o matches tagged Valid .v) = v;
 endinterface;
-
 
 endpackage

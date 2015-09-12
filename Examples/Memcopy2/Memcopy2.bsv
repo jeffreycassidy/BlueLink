@@ -8,30 +8,26 @@ import AFUHardware::*;
 
 import AFUToHostStream::*;
 import HostToAFUStream::*;
+import AFU::*;
 
 import FIFO::*;
 import ClientServerU::*;
 import CmdBuf::*;
 import MMIO::*;
 
+import Common::*;
+
 import PSLTypes::*;
 
-typedef struct { UInt#(64) addr; } EAddress64LE deriving(Eq);
+import Endianness::*;
 
-function Bit#(n) endianSwap(Bit#(n) i) provisos (Mul#(nbytes,8,n),Div#(n,8,nbytes),Log#(nbytes,k));
-    Vector#(nbytes,Bit#(8)) t = toChunks(i);
-    return pack(reverse(t));
-endfunction
-
-instance Bits#(EAddress64LE,64);
-    function Bit#(64) pack(EAddress64LE i) = endianSwap(pack(i.addr));
-    function EAddress64LE unpack(Bit#(64) b) = EAddress64LE { addr: unpack(endianSwap(b)) };
-endinstance
+/** Interface uses HostNative byte ordering. C/C++ structs appear in correct element order but need endian swap for each element.
+ */
 
 typedef struct {
-    EAddress64LE        eaSrc;
-    EAddress64LE        eaDst;
-    EAddress64LE        size;
+    LittleEndian#(EAddress64) eaSrc;
+    LittleEndian#(EAddress64) eaDst;
+    LittleEndian#(EAddress64) size;
 
     ReservedZero#(64)   padA;
 
@@ -40,14 +36,12 @@ typedef struct {
     ReservedZero#(512)  padC;
 } MemcopyWED deriving(Bits,Eq);
 
-module mkAFU_Memcopy2(DedicatedAFUNoParity#(MemcopyWED,2));
+module mkAFU_Memcopy2(DedicatedAFUNoParity#(2));
     //// WED reg
-    SegReg#(MemcopyWED,2,512) wed <- mkSegReg(unpack(?));
-
-
+    SegReg#(MemcopyWED,2,512) wedreg <- mkSegReg(HostNative,unpack(?));
+    MemcopyWED wed = wedreg.entire;
 
     //// Reset controller
-
     Stmt rststmt = seq
         noAction;
         $display($time," INFO: AFU Reset FSM completed");
@@ -63,15 +57,19 @@ module mkAFU_Memcopy2(DedicatedAFUNoParity#(MemcopyWED,2));
     let pwFinish <- mkPulseWire;
 
     // Host->AFU stream controller & output data
-    let { istreamctrl, stream } <- mkHostToAFUStream(16,cmdbuf.client[1]);
+    let { istreamctrl, stream } <- mkHostToAFUStream(8,cmdbuf.client[1],EndianSwap);
 
     // AFU->Host controller
-    let ostreamctrl <- mkAFUToHostStream(cmdbuf.client[0], stream);
+    let ostreamctrl <- mkAFUToHostStream(8, cmdbuf.client[0], EndianSwap, stream);
 
     FIFO#(void) ret <- mkFIFO1;
 
     Reg#(Bool) copyDone <- mkReg(False);
     Reg#(Bool) masterDone <- mkReg(False);
+
+    EAddress64 eaSrc = unpackle(wed.eaSrc);
+    EAddress64 eaDst = unpackle(wed.eaDst);
+    EAddress64 size  = unpackle(wed.size);
 
     Stmt ctlstmt = seq
         masterDone <= False;
@@ -79,12 +77,12 @@ module mkAFU_Memcopy2(DedicatedAFUNoParity#(MemcopyWED,2));
         await(pwStart);
         action
             $display($time," INFO: AFU Master FSM starting");
-            $display($time,"      Size:          %016X",wed.entire.size.addr);
-            $display($time,"      Src address: %016X",wed.entire.eaSrc.addr);
-            $display($time,"      Dst address: %016X",wed.entire.eaDst.addr);
+            $display($time,"      Size:          %016X",size );
+            $display($time,"      Src address: %016X",  eaSrc);
+            $display($time,"      Dst address: %016X",  eaDst);
 
-            istreamctrl.start(wed.entire.eaSrc.addr,wed.entire.size.addr);
-            ostreamctrl.start(wed.entire.eaDst.addr,wed.entire.size.addr);
+            istreamctrl.start(eaSrc.addr,size.addr);
+            ostreamctrl.start(eaDst.addr,size.addr);
         endaction
 
         action
@@ -105,13 +103,14 @@ module mkAFU_Memcopy2(DedicatedAFUNoParity#(MemcopyWED,2));
 
     ClientU#(CacheCommand,CacheResponse) cmd <- mkClientUFromClient(cmdbuf.psl);
 
-    FIFO#(MMIOResponse) mmResp <- mkFIFO1;
 
-    interface SegmentedReg wedreg = wed;
+    FIFO#(MMIOResponse) mmResp <- mkFIFO1;
 
     interface ClientU command = cmd;
 
     interface AFUBufferInterface buffer = cmdbuf.pslbuff;
+
+    interface Vector wedwrite = map(regToWriteOnly,wedreg.seg);
 
     interface Server mmio;
         interface Get response = toGet(mmResp);
@@ -131,8 +130,8 @@ module mkAFU_Memcopy2(DedicatedAFUNoParity#(MemcopyWED,2));
                 else if (i matches tagged DWordRead { index: .dwi })
                     case (dwi) matches
                         0:          mmResp.enq(tagged DWordData 64'h0123456700f00d00);
-                        1:          mmResp.enq(tagged DWordData pack(wed.entire.eaDst.addr));
-                        2:          mmResp.enq(tagged DWordData pack(wed.entire.size.addr));
+                        1:          mmResp.enq(tagged DWordData pack(eaDst.addr));
+                        2:          mmResp.enq(tagged DWordData pack(size.addr));
                         3:          mmResp.enq(tagged DWordData (copyDone   ? 64'h1111111111111111 : 64'h0));
                         4:          mmResp.enq(tagged DWordData (masterDone ? 64'hf00ff00ff00ff00f : 64'h1));
                         default:    mmResp.enq(tagged DWordData 0);
@@ -167,6 +166,7 @@ endmodule
 
 (*clock_prefix="ha_pclock"*)
 module mkSyn_Memcopy2(AFUHardware#(2));
+
     let dut <- mkAFU_Memcopy2;
     let wrap <- mkDedicatedAFUNoParity(False,False,dut);
 

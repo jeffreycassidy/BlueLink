@@ -10,9 +10,11 @@ import FIFO::*;
 import MMIO::*;
 import MMIOConfig::*;
 
-interface DedicatedAFUNoParity#(type wed_t,numeric type brlat);
-    // holds the work element descriptor
-    interface SegReg#(wed_t,2,512)                      wedreg;
+import Vector::*;
+import Endianness::*;
+
+interface DedicatedAFUNoParity#(numeric type brlat);
+    interface Vector#(2,WriteOnly#(Bit#(512)))          wedwrite;
 
     interface ClientU#(CacheCommand,CacheResponse)      command;
     interface AFUBufferInterface#(brlat)                buffer;
@@ -42,7 +44,7 @@ typedef union tagged {
     UInt#(64)   Error;
 } DedicatedAFUStatus deriving(Eq,Bits,FShow);
 
-module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(wed_t,brlat) afu)(AFU#(brlat));
+module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(brlat) afu)(AFU#(brlat));
 
     Reg#(DedicatedAFUStatus)                st <- mkReg(Unknown);
 
@@ -220,7 +222,7 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(w
                 if (parity_maybe(parcheck,bwp) matches tagged Valid .bw)
                     case (st) matches
                         tagged ReadWED .*:                         // intercept buffer writes during WED read
-                            afu.wedreg.seg[bw.bwad] <= bw.bwdata;
+                            afu.wedwrite[bw.bwad] <= bw.bwdata;
                         Running:                            // pass through when running
                             afu.buffer.readdata.put(bw);                            
                         default:                            // should not receive requests here

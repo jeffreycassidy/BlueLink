@@ -13,7 +13,13 @@
 #include <array>
 #include <boost/range.hpp>
 
-/** Simplest possible WED container, just an opaque wrapper around a void*.
+#include <boost/range/algorithm.hpp>
+#if BOOST_VERSION >= 105600
+#define HAVE_BOOST_ALIGN
+#include <boost/align/is_aligned.hpp>
+#endif
+
+/** Simplest possible WED container, just an opaque non-copyable wrapper around a void*.
  *
  */
 
@@ -27,7 +33,12 @@ public:
     WED& operator=(const WED&) = delete;
 
 protected:
-    explicit WED(unsigned char* p) : p_(p){}
+    explicit WED(unsigned char* p) : p_(p)
+    {
+#ifdef HAVE_BOOST_ALIGN
+	assert(boost::align::is_aligned(128,p_);
+#endif
+    }
 
 private:
     unsigned char* p_=nullptr;
@@ -37,14 +48,15 @@ private:
 /** A more sophisticated WED container, knowing the contained type, size, and alignment and providing the dereference operators.
  */
 
-template<class T,std::size_t Nb,std::size_t Na=Nb>class WEDBase : public WED
+template<class T,std::size_t Nb=128,std::size_t Na=Nb>class WEDBase : public WED
 {
 public:
     typedef T type;
 
+    BOOST_STATIC_ASSERT_MSG(sizeof(T) == Nb,"Type does not match specified size in WEDBase");
+
     explicit WEDBase(T* p) : WED(reinterpret_cast<unsigned char*>(p))
         {
-            assert(check());
             boost::fill(bytes(),0);
         }
 
@@ -60,14 +72,11 @@ public:
     boost::iterator_range<const unsigned char*> bytes() const
         { const unsigned char *p = reinterpret_cast<unsigned const char*>(get()); return boost::iterator_range<const unsigned char*>(p,p+size_); }
 
-    bool check() const { return (reinterpret_cast<std::size_t>(get()) & mask_) == 0; }
-
     std::size_t payloadSize() const { return sizeof(T); }
 
 protected:
     static constexpr std::size_t size_=Nb;
     static constexpr std::size_t align_=Na;
-    static constexpr std::size_t mask_=align_-1;
 };
 
 template<class T,std::size_t size,std::size_t align=size>class StackWED : public WEDBase<T,size,align>

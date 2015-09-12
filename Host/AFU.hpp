@@ -25,6 +25,8 @@ extern "C" {
 	extern int errno;
 }
 
+constexpr std::size_t CACHELINE_BYTES=128;
+
 class AFU {
 	std::string devstr_="";
 	struct cxl_afu_h* afu_h_=nullptr;
@@ -35,9 +37,6 @@ class AFU {
 
 
 	static const std::vector<std::pair<unsigned,std::string>> mode_names;
-
-
-	void start_sim();
 
 public:
 	class InvalidDevice : public std::exception {

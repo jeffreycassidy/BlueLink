@@ -42,12 +42,15 @@ endinterface
 /** Wrapper around the Altera IP core for an MLAB-based unregistered lookup. The specific instance was modified to accommodate a
  * variable width/depth/number of address lines.
  *
+ * The AUSED parameter specifies how many address lines are actually used to prevent a Verilog dangling-port warning.
+ * TODO: Check that log2(depth) performs as expected (ceil(log2(depth))) for depth not a power of 2
  */
 
 import "BVI" MLAB_0l = module mkAlteraStratixVMLAB_0l#(Integer depth)(Lookup#(na,t)) provisos (Bits#(t,nd));
     default_clock clock(clock, (*unused*) clk_gate);
     default_reset no_reset;
 
+    parameter AUSED  = log2(depth);             // same as ceil(log2(depth))
     parameter AWIDTH = valueOf(na);
     parameter DWIDTH = valueOf(nd);
     parameter DEPTH  = depth;
@@ -60,10 +63,29 @@ import "BVI" MLAB_0l = module mkAlteraStratixVMLAB_0l#(Integer depth)(Lookup#(na
     schedule lookup CF write;
 endmodule
 
-function m#(Lookup#(na,t)) mkZeroLatencyLookup(Integer depth)
-	provisos (
-		Bits#(t,nd),
-		IsModule#(m,a)) = mkAlteraStratixVMLAB_0l(depth);
+// older form without width transformation
+//function m#(Lookup#(na,t)) mkZeroLatencyLookup(Integer depth)
+//	provisos (
+//		Bits#(t,nd),
+//		IsModule#(m,a)) = mkAlteraStratixVMLAB_0l(depth);
+
+module mkZeroLatencyLookup#(Integer depth)(Lookup#(na,t)) provisos (Bits#(t,nd));
+    staticAssert(depth <= 256,"Invalid depth requested (>256)");
+    staticAssert(depth <= valueOf(TExp#(na)),"Insufficient address port width specified for requested depth");
+
+    let _w <- mkAlteraStratixVMLAB_0l(depth);
+
+    method Action write(UInt#(na) addr,t data);
+        dynamicAssert(addr < fromInteger(depth),"Invalid address requested");
+        _w.write(addr,data);
+    endmethod
+
+    method ActionValue#(t) lookup(UInt#(na) addr);
+        dynamicAssert(addr < fromInteger(depth),"Invalid address requested");
+        let o <- _w.lookup(addr);
+        return o;
+    endmethod
+endmodule
 
 
 typedef function ActionValue#(t) f(UInt#(na) addr) ReadPort#(numeric type na,type t);

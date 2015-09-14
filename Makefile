@@ -10,12 +10,12 @@ test-ResourceManager: ResourceManager.bsv
 	bsc $(BSC_SIM_OPTS) -g mkTB_ResourceManager $<
 	bsc $(BSC_SIM_OPTS) -e mkTB_ResourceManager -o $@
 
-test-afu2host: work bsvlibs libs afu2host mkSyn_AFUToHost.v
+test-afu2host: work bsvlibs vsim_bluelink libs afu2host mkSyn_AFUToHost.v
 	xterm -hold -e "sleep 6; cd /home/jcassidy/src/CAPI/pslse/pslse; ./pslse"&
 	xterm -hold -e "sleep 8; ./afu2host"&
 	vsim -do "source test_afu2host.tcl"&
 
-test-host2afu: work bsvlibs libs host2afu mkSyn_HostToAFU.v
+test-host2afu: work bsvlibs vsim_bluelink libs host2afu mkSyn_HostToAFU.v
 	xterm -hold -e "sleep 6; cd /home/jcassidy/src/CAPI/pslse/pslse; ./pslse"&
 	xterm -hold -e "sleep 8; ./host2afu"&
 	vsim -do "source test_host2afu.tcl"&
@@ -37,7 +37,7 @@ host2afu: host2afu.cpp Host/*.hpp
 clean:
 	for i in $(SUBDIRS); do make -C $$i clean; done
 	rm -rf *.so bsvlibs afu2host host2afu *.b[ao] model_*.cxx model_*.cxx mk*.v vpi_wrapper_*.[ch] work *.o mk*.cxx mk*.h model_*.h \
-		register.c *.vstf transcript *.wlf *.dSYM  *.out build.log
+		register.c *.vstf transcript *.wlf *.dSYM  *.out build.log work vsim_bluelink bsvlibs
 
 test-CmdBuf: mkTB_CmdBuf.v work
 	vsim -c -do "vlog mkTB_CmdBuf.v; vsim -L bsvlibs -L altera_mf_ver mkTB_CmdBuf; force CLK -drive 1'b0, 1'b1 5 -repeat 10; force RST_N -drive 1'b0, 1'b1 10; run -all;"
@@ -52,7 +52,10 @@ CmdBuf.bo: CmdBuf.bsv
 
 work:
 	vlib work
-	vlog -timescale 1ns/1ns MLAB_0l.v
+
+vsim_bluelink:
+	vlib vsim_bluelink
+	vlog -work vsim_bluelink -timescale 1ns/1ns MLAB_0l.v
 
 # compile all of the Bluespec libraries into their own Modelsim lib
 bsvlibs:

@@ -13,6 +13,8 @@
 /** Superficially, this appears to duplicate boost::aligned_allocator. However, Boost requires an attribute on the type which is a
  * bit of a pain.
  *
+ * Align is specified in bytes
+ *
  */
 
 template<typename T,std::size_t align>class aligned_allocator

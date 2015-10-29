@@ -60,7 +60,7 @@ vsim_bluelink:
 # compile all of the Bluespec libraries into their own Modelsim lib
 bsvlibs:
 	vlib bsvlibs
-	vlog -work bsvlibs -timescale 1ns/1ns +define+BSV_NO_INITIAL_BLOCKS +define+TOP="foo" +define +BSV_ASSIGNMENT_DELAY=\#1 $(BLUESPECDIR)/Verilog/*.v
+	vlog -work bsvlibs -timescale 1ns/1ps +define+BSV_NO_INITIAL_BLOCKS +define+TOP="foo" +define +BSV_ASSIGNMENT_DELAY=\#1 $(BLUESPECDIR)/Verilog/*.v
 
 libs:
 	for i in $(SUBDIRS); do make -C $$i libs; done

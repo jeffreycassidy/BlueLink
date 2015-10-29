@@ -7,6 +7,9 @@ import SpecialFIFOs::*;
 import RevertingVirtualReg::*;
 import BLProgrammableLUT::*;
 
+import DSPOps::*;
+import HList::*;
+
 import AFU::*;
 import ClientServerU::*;
 
@@ -81,11 +84,13 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
         Alias#(UInt#(4),clientIndex),
         Bits#(RequestTag,nbtag));
 
+    HCons#(MemSynthesisStrategy,HNil) syn = hCons(AlteraStratixV,hNil);
+
     // last issued command for each tag, and the client who issued the command
     // wire carries responses with client index and response
-    Lookup#(nbtag,CmdWithoutTag)                tagCmdHist   <- mkZeroLatencyLookup(ntags);
+    Lookup#(nbtag,CmdWithoutTag)                tagCmdHist   <- mkZeroLatencyLookup(syn,ntags);
 
-    MultiReadLookup#(nbtag,clientIndex)         tagClientMap <- mkMultiReadZeroLatencyLookup(3,ntags);
+    MultiReadLookup#(nbtag,clientIndex)         tagClientMap <- mkMultiReadZeroLatencyLookup(syn,3,ntags);
 
     // wire carries responses with client index and response
     FIFO#(Tuple2#(clientIndex,Response)) respWire <- mkBypassFIFO;

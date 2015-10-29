@@ -6,7 +6,8 @@ import BLProgrammableLUT::*;
 import Vector::*;
 import ClientServerU::*;
 
-import DReg::*;
+import HList::*;
+import DSPOps::*;
 
 import Assert::*;
 
@@ -31,7 +32,9 @@ endinterface
 
 module mkAFUReadBuf#(Integer nTags)(ReadBuf) provisos (Bits#(RequestTag,nt));
 
-    Vector#(2,Lookup#(nt,Bit#(512))) rbufseg <- replicateM(mkZeroLatencyLookup(nTags));
+    HCons#(MemSynthesisStrategy,HNil) syn = hCons(AlteraStratixV,hNil);
+
+    Vector#(2,Lookup#(nt,Bit#(512))) rbufseg <- replicateM(mkZeroLatencyLookup(syn,nTags));
 
     function ActionValue#(Bit#(512)) doLookup(RequestTag t,Lookup#(nt,Bit#(512)) l) = l.lookup(t);
 

@@ -2,6 +2,9 @@ package HostToAFUStream;
 
 import Common::*;
 
+import HList::*;
+import DSPOps::*;
+
 import Assert::*;
 import AFU::*;
 import PSLTypes::*;
@@ -152,8 +155,10 @@ module mkHostToAFUStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf,EndianPoli
     // buffer status, 1 space per buffer slot
     staticAssert(bufsize <= valueOf(TExp#(na)),"Inadequate address bits specified for the chosen buffer size");
 
+    HCons#(MemSynthesisStrategy,HNil) syn = hCons(AlteraStratixV,hNil);
+
 	List#(ReadBufStatusIfc) 	bufItemStatus <- List::replicateM(bufsize,mkReadBufStatusReg);
-    Vector#(2,Lookup#(na,Bit#(512))) rbufseg <- replicateM(mkZeroLatencyLookup(bufsize));
+    Vector#(2,Lookup#(na,Bit#(512))) rbufseg <- replicateM(mkZeroLatencyLookup(syn,bufsize));
 
 
     // *** REQUIRES -AGGRESSIVE-CONDITIONS  *** because of conditions on bufItemStatus[rdPtr]

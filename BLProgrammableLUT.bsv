@@ -9,8 +9,6 @@ import Vector::*;
 import ConfigReg::*;
 import RevertingVirtualReg::*;
 
-import ModuleContext::*;
-
 typedef union tagged {
     void BSVBehavioral;
     void AlteraStratixV;
@@ -63,25 +61,57 @@ import "BVI" MLAB_0l = module mkAlteraStratixVMLAB_0l#(Integer depth)(Lookup#(na
     schedule lookup CF write;
 endmodule
 
-// older form without width transformation
-//function m#(Lookup#(na,t)) mkZeroLatencyLookup(Integer depth)
-//	provisos (
-//		Bits#(t,nd),
-//		IsModule#(m,a)) = mkAlteraStratixVMLAB_0l(depth);
 
-module mkZeroLatencyLookup#(Integer depth)(Lookup#(na,t)) provisos (Bits#(t,nd));
-    staticAssert(depth <= 256,"Invalid depth requested (>256)");
+module mkZeroLatencyLookup#(opts_t synOpts,Integer depth)(Lookup#(na,t))
+    provisos (
+        Bits#(t,nd),
+        Gettable#(opts_t,MemSynthesisStrategy));
+
+    MemSynthesisStrategy memSyn = getIt(synOpts);
+
     staticAssert(depth <= valueOf(TExp#(na)),"Insufficient address port width specified for requested depth");
 
-    let _w <- mkAlteraStratixVMLAB_0l(depth);
+    Lookup#(na,t) _w;
+
+    case (memSyn) matches
+        AlteraStratixV:
+        begin
+            messageM("Instantiating an Altera MLAB-based LUT");
+            staticAssert(depth <= 256,"Invalid depth requested for Stratix V MLAB synthesis (>256)");
+            _w <- mkAlteraStratixVMLAB_0l(depth);
+        end
+
+        default:
+        begin
+            messageM("Instantiating a BSV behavioral LUT");
+            List#(Reg#(t)) v <- List::replicateM(depth,mkRegU);
+
+            // enforce single-read/single-write (this List#(Reg) model might allow multiple read/write so long as addresses
+            // don't conflict)
+            PulseWire writeP <- mkPulseWire, readP <- mkPulseWire;
+
+            _w = interface Lookup;
+                method Action write(UInt#(na) addr,t data);
+                    writeP.send;
+                    v[addr] <= data;
+                endmethod
+
+                method ActionValue#(t) lookup(UInt#(na) addr);
+                    readP.send;
+                    return v[addr];
+                endmethod
+            endinterface;
+        end
+    endcase
+
 
     method Action write(UInt#(na) addr,t data);
-        dynamicAssert(addr < fromInteger(depth),"Invalid address requested");
+        dynamicAssert(addr <= fromInteger(depth-1),"Invalid address requested");
         _w.write(addr,data);
     endmethod
 
     method ActionValue#(t) lookup(UInt#(na) addr);
-        dynamicAssert(addr < fromInteger(depth),"Invalid address requested");
+        dynamicAssert(addr <= fromInteger(depth-1),"Invalid address requested");
         let o <- _w.lookup(addr);
         return o;
     endmethod
@@ -90,13 +120,15 @@ endmodule
 
 typedef function ActionValue#(t) f(UInt#(na) addr) ReadPort#(numeric type na,type t);
 
-module mkMultiReadZeroLatencyLookup#(Integer nread,Integer depth)(MultiReadLookup#(na,t))
+module mkMultiReadZeroLatencyLookup#(opts_t opts,Integer nread,Integer depth)(MultiReadLookup#(na,t))
     provisos (
+        Gettable#(opts_t,MemSynthesisStrategy),
         Bits#(t,nd));
 
     ReadPort#(na,t) readPort[nread];
 
-    List#(Lookup#(na,t)) luts <- List::replicateM(nread,mkZeroLatencyLookup(depth));
+    List#(Lookup#(na,t)) luts <- List::replicateM(nread,mkZeroLatencyLookup(opts,depth));
+
     for(Integer i=0;i<nread;i=i+1)
         readPort[i] = luts[i].lookup;
 
@@ -107,5 +139,8 @@ module mkMultiReadZeroLatencyLookup#(Integer nread,Integer depth)(MultiReadLooku
 
     interface Array lookup = readPort;
 endmodule
+
+// don't export underlying Altera primitives
+//export Lookup, MultiReadLookup, mkZeroLatencyLookup, mkMultiReadZeroLatencyLookup, MemSynthesisStrategy, ReadPort;
 
 endpackage

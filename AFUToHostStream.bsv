@@ -10,6 +10,9 @@ import WriteBuf::*;
 
 import Cntrs::*;
 
+import HList::*;
+import BLProgrammableLUT::*;
+
 import CAPIStream::*;
 
 import Endianness::*;
@@ -36,15 +39,16 @@ import Endianness::*;
  * TODO: Graceful reset logic
  */
 
-module mkAFUToHostStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf,EndianPolicy endianPolicy,PipeOut#(Bit#(1024)) pi)(StreamControl)
+module mkAFUToHostStream#(synT syn,Integer bufsize,CmdBufClientPort#(2) cmdbuf,EndianPolicy endianPolicy,PipeOut#(Bit#(1024)) pi)(StreamControl)
     provisos (
-        NumAlias#(nt,4));
+        NumAlias#(nt,4),
+        Gettable#(synT,MemSynthesisStrategy));
     
     // Stream counter
     let { eaCounterControl, nextAddress } <- mkStreamCounter;
 
     // 16-element write buffer with latency 2
-    WriteBuf#(2) wbuf <- mkAFUWriteBuf(16);
+    WriteBuf#(2) wbuf <- mkAFUWriteBuf(syn,16);
 
     mkConnection(cmdbuf.buffer.writedata,wbuf.pslin);
 
@@ -89,7 +93,8 @@ module mkAFUToHostStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf,EndianPoli
 
         case (resp.response) matches
             Done:
-                $display($time," Write completion for tag %X",resp.rtag);
+                noAction;
+                //$display($time," Write completion for tag %X",resp.rtag);
    	        Paged:
                 $display($time," WARNING: PAGED response ignored for tag %X",resp.rtag);
            

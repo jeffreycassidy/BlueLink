@@ -263,11 +263,14 @@ module mkHostToAFUStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf,EndianPoli
     // handle buffer writes
     (* fire_when_enabled *) 
     rule bufWrite;
-        let addr = cmdbuf.buffer.readdata.bwad;
-        let data = cmdbuf.buffer.readdata.bwdata;
-        let tag  = cmdbuf.buffer.readdata.bwtag;
 
-        $display($time,fshow(cmdbuf.buffer.readdata));
+        let rd = cmdbuf.buffer.readdata;
+
+        let addr = rd.bwad;
+        let data = rd.bwdata;
+        let tag  = rd.bwtag;
+
+//        $display($time,fshow(cmdbuf.buffer.readdata));
 
         Maybe#(UInt#(na)) idx = tagged Invalid;
         for (Integer i=0;i<List::length(tags);i=i+1)
@@ -276,8 +279,8 @@ module mkHostToAFUStream#(Integer bufsize,CmdBufClientPort#(2) cmdbuf,EndianPoli
 
         if (idx matches tagged Valid .i)
             bwReg.enq(tuple3(addr,i,data));
-        else
-            dynamicAssert(False,"Received data for tag not currently in use");
+//        else
+//            dynamicAssert(False,"Received data for tag not currently in use");
     endrule
 
     // sink buffer writes requests to the read buffer

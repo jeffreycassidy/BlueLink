@@ -7,6 +7,7 @@ import Vector::*;
 import ClientServerU::*;
 
 import DReg::*;
+import HList::*;
 
 import Assert::*;
 
@@ -36,8 +37,12 @@ endinterface
  * Latency is given as an argument, but currently only supports 2 (brlat=1).
  */
 
-module mkAFUWriteBuf#(Integer nTags)(WriteBuf#(lat)) provisos (Bits#(RequestTag,nt));
-    Vector#(2,Lookup#(nt,Bit#(512))) wbufseg <- replicateM(mkZeroLatencyLookup(nTags));
+module mkAFUWriteBuf#(synT syn,Integer nTags)(WriteBuf#(lat))
+    provisos (
+        Bits#(RequestTag,nt),
+        Gettable#(synT,MemSynthesisStrategy)
+    );
+    Vector#(2,Lookup#(nt,Bit#(512))) wbufseg <- replicateM(mkZeroLatencyLookup(syn,nTags));
 
     // Current PSL supports only brlat=1, meaning data is available 2nd cycle after brvalid asserted
     staticAssert(valueOf(lat)==2,"Invalid latency value in mkAFUWriteBuf; must be 2 (corresponds to brlat=1)");

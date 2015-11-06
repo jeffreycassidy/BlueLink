@@ -96,8 +96,6 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
     FIFO#(Tuple2#(clientIndex,Response)) respWire <- mkBypassFIFO;
 
 
-    // wire carries responses with client index and response
-
     // tag manager keeps track of which tags are available
     ResourceManager#(nbtag) tagMgr <- mkResourceManager(ntags,False,True);
 
@@ -192,6 +190,10 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
                 // update internal state
                 case (resp.response) matches
                     Done:       tagMgr.unlock(resp.rtag);
+//                    Paged:
+//                    begin
+//                        $display($time," INFO: Received PAGED response for tag %d, sending restart");
+//                    end
                     default:
                     action
                         tagMgr.unlock(resp.rtag);

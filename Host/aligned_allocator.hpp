@@ -72,6 +72,11 @@ public:
         p->~U();
     }
 
+    template<class U>void construct(U* p)
+    {
+    	::new((void*)p) U;
+    }
+
     template<class U,class... Args>void construct(U* p,Args&&...args)
     {
         ::new((void*)p) U (std::forward<Args...>(args...));

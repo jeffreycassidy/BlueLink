@@ -84,8 +84,11 @@ public:
 
 	void print_details() const;
 
+	/// MMIO reads and writes, with offset specified in bytes
 	uint64_t mmio_read64(unsigned) const;
+	uint32_t mmio_read32(unsigned) const;
 	void mmio_write64(unsigned,uint64_t) const;
+	void mmio_write32(unsigned,uint32_t) const;
 
 	void await_event(unsigned) const;
 
@@ -200,6 +203,21 @@ uint64_t AFU::mmio_read64(const unsigned offset) const
 	return t;
 }
 
+
+uint32_t AFU::mmio_read32(const unsigned offset) const
+{
+	uint32_t t;
+	int ret;
+	if (!afu_h_)
+		throw InvalidDevice(devstr_);
+	if ((ret=cxl_mmio_read32(afu_h_,offset,&t)))
+	{
+		cout << "cxl_mmio_read32 returned a nonzero exit code: " << ret << endl;
+		cout << "  error string: " << strerror(errno) << endl;
+	}
+	return t;
+}
+
 void AFU::mmio_write64(const unsigned offset,const uint64_t data) const
 {
 	int ret;
@@ -208,6 +226,18 @@ void AFU::mmio_write64(const unsigned offset,const uint64_t data) const
 	if ((ret=cxl_mmio_write64(afu_h_,offset,data)))
 	{
 		cout << "cxl_mmio_write64 returned a nonzero exit code: " << ret << endl;
+		cout << "  error string: " << strerror(errno) << endl;
+	}
+}
+
+void AFU::mmio_write32(const unsigned offset,const uint32_t data) const
+{
+	int ret;
+	if (!afu_h_)
+		throw InvalidDevice(devstr_);
+	if ((ret=cxl_mmio_write32(afu_h_,offset,data)))
+	{
+		cout << "cxl_mmio_write32 returned a nonzero exit code: " << ret << endl;
 		cout << "  error string: " << strerror(errno) << endl;
 	}
 }

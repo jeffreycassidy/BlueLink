@@ -36,7 +36,7 @@ struct StreamWED {
 
 int main (int argc, char *argv[])
 {
-    const std::size_t N=256;
+    const std::size_t N=4096;
 
 	boost::random::mt19937_64 rng;
 

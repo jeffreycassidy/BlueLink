@@ -7,7 +7,8 @@ import SpecialFIFOs::*;
 import RevertingVirtualReg::*;
 import BLProgrammableLUT::*;
 
-import DSPOps::*;
+import DReg::*;
+
 import HList::*;
 
 import AFU::*;
@@ -93,7 +94,7 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
     MultiReadLookup#(nbtag,clientIndex)         tagClientMap <- mkMultiReadZeroLatencyLookup(syn,3,ntags);
 
     // wire carries responses with client index and response
-    FIFO#(Tuple2#(clientIndex,Response)) respWire <- mkBypassFIFO;
+    FIFO#(Tuple2#(clientIndex,Response)) respWire <- mkLFIFO;
 
 
     // tag manager keeps track of which tags are available
@@ -120,6 +121,22 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
                 tagged Invalid:             tagged Invalid;
             endcase);
     endrule
+
+	Reg#(Maybe#(RequestTag)) rTagToUnlock <- mkDReg(tagged Invalid);
+	Reg#(Maybe#(RequestTag)) rTagToUnlock1 <- mkDReg(tagged Invalid);
+	Reg#(Maybe#(RequestTag)) rTagToUnlock2 <- mkDReg(tagged Invalid);
+
+	rule delayUnlock if (rTagToUnlock matches tagged Valid .t);
+		rTagToUnlock1 <= tagged Valid t;
+	endrule
+
+	rule delayUnlock1 if (rTagToUnlock1 matches tagged Valid .t);
+		rTagToUnlock2 <= tagged Valid t;
+	endrule
+
+	rule doUnlock if (rTagToUnlock1 matches tagged Valid .t);
+		tagMgr.unlock(t);
+	endrule
 
     for(Integer i=0;i<valueOf(n);i=i+1)
     begin
@@ -187,20 +204,7 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
                 let cl <- tagClientMap.lookup[0](truncate(resp.rtag));
                 respWire.enq(tuple2(cl, Response { rtag: resp.rtag, response: resp.response, rcredits: resp.rcredits }));
 
-                // update internal state
-                case (resp.response) matches
-                    Done:       tagMgr.unlock(resp.rtag);
-//                    Paged:
-//                    begin
-//                        $display($time," INFO: Received PAGED response for tag %d, sending restart");
-//                    end
-                    default:
-                    action
-                        tagMgr.unlock(resp.rtag);
-                        $display($time," WARNING: freeing tag %d after response ",resp.rtag,fshow(resp));
-//                        dynamicAssert(False,"Invalid response type, don't know how to deal with it");
-                    endaction
-                endcase
+				rTagToUnlock <= tagged Valid resp.rtag;
             endmethod
         endinterface
     endinterface

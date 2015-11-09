@@ -14,6 +14,8 @@ interface StreamControl;
 
     (* always_ready *)
     method Bool     done;
+
+	method Action 	abort;
 endinterface
 
 

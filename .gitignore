@@ -25,3 +25,8 @@ transcript
 *.dSYM
 modelsim.ini
 vsim_bluelink
+wlft*
+*.rbf
+*.qar
+*.log
+shim_host.dat

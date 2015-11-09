@@ -167,6 +167,7 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
     // synthesis options
     HCons#(MemSynthesisStrategy,HNil) syn = hCons(AlteraStratixV,hNil);
     staticAssert(nTags <= valueOf(TExp#(nTagIdx)),"Inadequate address bits specified for the chosen number of tags");
+    Bool verbose=False;
 
     // Transfer counters
     Reg#(UInt#(64))             eaBase          <- mkReg(0);
@@ -215,7 +216,8 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
 
         pagedRestart.enq(tag);
 
-        $display($time," INFO: Issuing restart in response to Paged using tag %d",tag);
+        if (verbose)
+            $display($time," INFO: Issuing restart in response to Paged using tag %d",tag);
     endrule
 
     function TagStatus read(TagStatusIfc ifc) = ifc.current._read;
@@ -244,7 +246,8 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
                 cea: toEAddress64(idxReissue),
                 csize: fromInteger(cacheLineBytes)});
 
-        $display($time," INFO: Reissuing command for flushed tag %d, new tag %d",i,tag);
+        if (verbose)
+            $display($time," INFO: Reissuing command for flushed tag %d, new tag %d",i,tag);
         tagStatus[tag].issue;
 
         // write address to new command tag
@@ -267,16 +270,20 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
 				cea: toEAddress64(cacheLineIndex),
 				csize: fromInteger(cacheLineBytes) });
 
-        $write($time," INFO - Tag status: ");
-        for(Integer i=0;i<nTags;i=i+1)
-            $write(" ",fshow(tagStatus[i].current));
-        $display;
+        if (verbose)
+        begin
+            $write($time," INFO - Tag status: ");
+            for(Integer i=0;i<nTags;i=i+1)
+                $write(" ",fshow(tagStatus[i].current));
+            $display;
+        end
 
         // mark tag as in-use
 //        dynamicAssert(tagStatus[tag].current == Done,"Trying to start a read with a tag where status != Done");
         tagStatus[tag].issue;
 
-        $display($time," INFO: Issuing new read using tag %d",tag);
+        if (verbose)
+            $display($time," INFO: Issuing new read using tag %d",tag);
 
         // save address offset for bulk transfer
         addressLUT.write(tag,cacheLineIndex);
@@ -332,7 +339,6 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
 
 
     (* descending_urgency="processBufWrite,reissueFlushed" *)
-    (* fire_when_enabled *)
 
     rule processBufWrite;
         // check for valid bwad

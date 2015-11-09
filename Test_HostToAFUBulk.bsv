@@ -41,6 +41,8 @@ module mkAFU_HostToAFUBulk(Tuple2#(DedicatedAFUNoParity#(2),PipeOut#(Tuple2#(UIn
     SegReg#(HostToAFUWED,2,512) wedreg <- mkSegReg(HostNative,unpack(?));
     HostToAFUWED wed = wedreg.entire;
 
+	Bool verbose=False;
+
     Reg#(Bool) streamDone <- mkReg(False);
 
 
@@ -180,7 +182,8 @@ module mkSyn_HostToAFUBulk(AFUHardware#(2));
 	rule showOutput;
 		oPipe.deq;
 		let { addr, data } = oPipe.first;
-		$display($time,"Output [%04X]: %0128X",addr,data);
+		if (verbose)
+			$display($time,"Output [%04X]: %0128X",addr,data);
 		$fdisplay(fd,"%04X %0128X",addr,data);
 	endrule
 

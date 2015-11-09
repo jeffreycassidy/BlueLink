@@ -3,7 +3,6 @@ package HostToAFUStream;
 import Common::*;
 
 import HList::*;
-import DSPOps::*;
 
 import Assert::*;
 import AFU::*;

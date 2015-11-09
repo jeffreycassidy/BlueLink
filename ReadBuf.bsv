@@ -7,7 +7,6 @@ import Vector::*;
 import ClientServerU::*;
 
 import HList::*;
-import DSPOps::*;
 
 import Assert::*;
 

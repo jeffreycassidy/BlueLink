@@ -1,4 +1,4 @@
-BSC_OPTS=-check-assert -p +:MMIO:DedicatedAFU:Core:../BDPIPipe -aggressive-conditions
+BSC_OPTS=-check-assert -p +:MMIO:DedicatedAFU:Core:../BDPIPipe:/home/jcassidy/src/FMHW/modules -aggressive-conditions
 
 BSC_SIM_OPTS=$(BSC_OPTS) -sim
 BSC_VER_OPTS=$(BSC_OPTS) -verilog -opt-undetermined-vals -unspecified-to X
@@ -9,6 +9,21 @@ test-ResourceManager: ResourceManager.bsv
 	bsc $(BSC_SIM_OPTS) $<
 	bsc $(BSC_SIM_OPTS) -g mkTB_ResourceManager $<
 	bsc $(BSC_SIM_OPTS) -e mkTB_ResourceManager -o $@
+
+mkSyn_HostToAFUBulk.v: Test_HostToAFUBulk.bsv HostToAFUBulk.bsv
+	bsc -u $(BSC_VER_OPTS) $<
+	bsc $(BSC_VER_OPTS) -g mkSyn_HostToAFUBulk -o $@ $<
+
+test-h2abulk: work bsvlibs vsim_bluelink libs mkSyn_HostToAFUBulk.v
+	vsim -do "source test_h2abulk.tcl"
+
+h2abulkreorder: h2abulkreorder.cpp
+	g++ -std=c++11 -fPIC -O3 -I/usr/local/include -lgmp -o $@ $^
+	
+
+test-afu2host: work bsvlibs vsim_bluelink libs afu2host mkSyn_AFUToHost.v
+	xterm -hold -e "sleep 6; cd /home/jcassidy/src/CAPI/pslse/pslse; ./pslse"&
+	
 
 test-afu2host: work bsvlibs vsim_bluelink libs afu2host mkSyn_AFUToHost.v
 	xterm -hold -e "sleep 6; cd /home/jcassidy/src/CAPI/pslse/pslse; ./pslse"&

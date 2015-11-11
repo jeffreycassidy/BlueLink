@@ -15,7 +15,9 @@ mkSyn_HostToAFUBulk.v: Test_HostToAFUBulk.bsv HostToAFUBulk.bsv
 	bsc $(BSC_VER_OPTS) -g mkSyn_HostToAFUBulk -o $@ $<
 
 test-h2abulk: work bsvlibs vsim_bluelink libs mkSyn_HostToAFUBulk.v
-	vsim -do "source test_h2abulk.tcl"
+	vsim -do "source test_h2abulk.tcl"&
+	xterm -hold -e "sleep 6; pslse"&
+	xterm -hold -e "sleep 8; ./host2afu"&
 
 h2abulkreorder: h2abulkreorder.cpp
 	g++ -std=c++11 -fPIC -O3 -I/usr/local/include -lgmp -o $@ $^
@@ -23,7 +25,12 @@ h2abulkreorder: h2abulkreorder.cpp
 
 test-afu2host: work bsvlibs vsim_bluelink libs afu2host mkSyn_AFUToHost.v
 	xterm -hold -e "sleep 6; cd /home/jcassidy/src/CAPI/pslse/pslse; ./pslse"&
-	
+
+test-afu2host512: work bsvlibs vsim_bluelink libs afu2host mkSyn_AFUToHost512.v
+	xterm -hold -e "sleep 6; cd /home/jcassidy/src/CAPI/pslse/pslse; ./pslse"&
+	xterm -hold -e "sleep 8; ./afu2host"&
+	vsim -do "source test_afu2host512.tcl"&
+
 
 test-afu2host: work bsvlibs vsim_bluelink libs afu2host mkSyn_AFUToHost.v
 	xterm -hold -e "sleep 6; cd /home/jcassidy/src/CAPI/pslse/pslse; ./pslse"&
@@ -38,6 +45,11 @@ test-host2afu: work bsvlibs vsim_bluelink libs host2afu mkSyn_HostToAFU.v
 mkSyn_AFUToHost.v: Test_AFUToHostStream.bsv AFUToHostStream.bsv ReadBuf.bsv CAPIStream.bsv
 	bsc $(BSC_VER_OPTS) -u $<
 	bsc $(BSC_VER_OPTS) -g mkSyn_AFUToHost -o $@ $<
+	
+mkSyn_AFUToHost512.v: Test_AFUToHostStream512.bsv AFUToHostStream512.bsv ReadBuf.bsv CAPIStream.bsv
+	bsc $(BSC_VER_OPTS) -u $<
+	bsc $(BSC_VER_OPTS) -g mkSyn_AFUToHost512 -o $@ $<
+	
 
 mkSyn_HostToAFU.v: Test_HostToAFUStream.bsv ReadBuf.bsv HostToAFUStream.bsv CAPIStream.bsv
 	bsc $(BSC_VER_OPTS) -u $<

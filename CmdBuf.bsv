@@ -9,6 +9,8 @@ import BLProgrammableLUT::*;
 
 import DReg::*;
 
+import PAClibx::*;
+
 import HList::*;
 
 import AFU::*;
@@ -87,17 +89,15 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
 
     HCons#(MemSynthesisStrategy,HNil) syn = hCons(AlteraStratixV,hNil);
 
-    // last issued command for each tag, and the client who issued the command
-    // wire carries responses with client index and response
-    Lookup#(nbtag,CmdWithoutTag)                tagCmdHist   <- mkZeroLatencyLookup(syn,ntags);
-
+    // keep track of which client issued which command
     MultiReadLookup#(nbtag,clientIndex)         tagClientMap <- mkMultiReadZeroLatencyLookup(syn,3,ntags);
 
     // wire carries responses with client index and response
-    FIFO#(Tuple2#(clientIndex,Response)) respWire <- mkLFIFO;
+    Reg#(Maybe#(Tuple2#(clientIndex,Response))) pslResponse <- mkDReg(tagged Invalid);
 
 
     // tag manager keeps track of which tags are available
+    // Bypass = True causes big problems meeting timing
     ResourceManager#(nbtag) tagMgr <- mkResourceManager(ntags,False,True);
 
     FIFO#(CacheCommand) oCmd <- mkPipelineFIFO;
@@ -122,20 +122,14 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
             endcase);
     endrule
 
-	Reg#(Maybe#(RequestTag)) rTagToUnlock <- mkDReg(tagged Invalid);
-	Reg#(Maybe#(RequestTag)) rTagToUnlock1 <- mkDReg(tagged Invalid);
-	Reg#(Maybe#(RequestTag)) rTagToUnlock2 <- mkDReg(tagged Invalid);
+	// Delay unlock command
+	// Found in simulation that commands were able to be issued with a given tag before seeing their completion
+	// Was wasting time with Paged, leading to a tag being reissued and re-flushed
 
-	rule delayUnlock if (rTagToUnlock matches tagged Valid .t);
-		rTagToUnlock1 <= tagged Valid t;
-	endrule
+	Wire#(RequestTag) rTagToUnlock <- mkDelayWire(2);
 
-	rule delayUnlock1 if (rTagToUnlock1 matches tagged Valid .t);
-		rTagToUnlock2 <= tagged Valid t;
-	endrule
-
-	rule doUnlock if (rTagToUnlock1 matches tagged Valid .t);
-		tagMgr.unlock(t);
+	rule doUnlock;
+		tagMgr.unlock(rTagToUnlock);			// implicit condition: rTagToUnlock has value
 	endrule
 
     for(Integer i=0;i<valueOf(n);i=i+1)
@@ -152,7 +146,6 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
 
                 // store command and indicate which client originated it
                 dynamicAssert(t < fromInteger(ntags),"Invalid tag specified");
-                tagCmdHist.write(truncate(t),cmd);
                 tagClientMap.write(truncate(t),fromInteger(i));
 
                 // enq command to output
@@ -162,8 +155,7 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
             endmethod
 
             interface Get response;
-                method ActionValue#(Response) get if (respWire.first matches { .cl, .resp } &&& cl == fromInteger(i));
-                    respWire.deq;
+                method ActionValue#(Response) get if (pslResponse matches tagged Valid { .cl, .resp } &&& cl == fromInteger(i));
                     return resp;
                 endmethod
             endinterface
@@ -201,10 +193,12 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
                 dynamicAssert(resp.rtag < fromInteger(ntags),"Invalid tag specified");
 
                 // steer towards the requesting client whether the downstream module consumes it or not
+                // MLAB followed by flop, probably OK for timing
                 let cl <- tagClientMap.lookup[0](truncate(resp.rtag));
-                respWire.enq(tuple2(cl, Response { rtag: resp.rtag, response: resp.response, rcredits: resp.rcredits }));
+                pslResponse <= tagged Valid tuple2(cl, Response { rtag: resp.rtag, response: resp.response, rcredits: resp.rcredits });
 
-				rTagToUnlock <= tagged Valid resp.rtag;
+                // this is just a reg, so OK
+				rTagToUnlock <= resp.rtag;
             endmethod
         endinterface
     endinterface

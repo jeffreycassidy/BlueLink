@@ -21,10 +21,8 @@ proc simcapi { tbname } {
 # Setup up the waveform viewer
 
 # global var required by wave_capi for buffer read valid delay
-set brlatcycles 2
+	set brlatcycles 2
     wave_capi /
 
     onfinish stop
-
-    run -all
 }

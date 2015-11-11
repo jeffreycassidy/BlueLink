@@ -164,6 +164,8 @@ module mkSyn_HostToAFUBulk(AFUHardware#(2));
     let { dut, oPipe } <- mkAFU_HostToAFUBulk;
     let wrap <- mkDedicatedAFUNoParity(False,False,dut);
 
+    Bool verbose=True;
+
 	Reg#(File) fd <- mkRegU;
 
 	Stmt ctrl = seq

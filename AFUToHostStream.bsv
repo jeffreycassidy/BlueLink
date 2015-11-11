@@ -73,7 +73,7 @@ module mkAFUToHostStream#(synT syn,Integer bufsize,CmdBufClientPort#(2) cmdbuf,E
             com: Write_mi,
             cabt: Abort,
             cea: EAddress64 { addr: ea },
-            csize: fromInteger(stepBytes) };
+            csize: fromInteger(cacheLineBytes) };
         let tag <- cmdbuf.putcmd(cmd);          // implicit condition: able to put a command
 
         // write data to buffer in tag slot

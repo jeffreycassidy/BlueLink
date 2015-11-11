@@ -7,3 +7,5 @@ proc com {} {
 com
 
 simcapi mkSyn_HostToAFUBulk
+
+run 8us

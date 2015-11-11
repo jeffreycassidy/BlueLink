@@ -48,7 +48,7 @@ struct StreamWED {
 
 int main (int argc, char *argv[])
 {
-	const std::size_t N = 512;
+	const std::size_t N = 4096;
 	cout << "Running with N=" << N << endl;
 
 	// set up the receive buffer
@@ -81,11 +81,12 @@ int main (int argc, char *argv[])
 
 
 	// start the transfer by writing MMIO dword #4
+	sleep(1);
 	afu.mmio_write64(32,0);
 
 
 	// wait for done signal (MMIO dword #3)
-	const unsigned timeout=10;
+	const unsigned timeout=20;
 	bool timedout=false;
 
 	cout << "Waiting for done signal from AFU" << endl;
@@ -99,6 +100,8 @@ int main (int argc, char *argv[])
 		timedout = true;
 		cout << "ERROR: AFU timed out after " << timeout << " seconds" << endl;
 	}
+
+	sleep(1);
 
 
 	// check for memory corruption

@@ -4,7 +4,6 @@ import PSLTypes::*;
 import Vector::*;
 import FIFO::*;
 import SpecialFIFOs::*;
-import RevertingVirtualReg::*;
 import BLProgrammableLUT::*;
 
 import DReg::*;
@@ -102,8 +101,6 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
 
     FIFO#(CacheCommand) oCmd <- mkPipelineFIFO;
 
-    Vector#(n,Reg#(Bool)) fixedPrioritySequence <- replicateM(mkRevertingVirtualReg(True));
-
     Vector#(n,CmdBufClientPort#(brlat)) clientP;
 
     Wire#(Tuple2#(clientIndex,BufferWrite))         bwWire <- mkWire;
@@ -132,14 +129,18 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
 		tagMgr.unlock(rTagToUnlock);			// implicit condition: rTagToUnlock has value
 	endrule
 
+
+	Vector#(n,PulseWire) inhibit <- replicateM(mkPulseWire);
+
     for(Integer i=0;i<valueOf(n);i=i+1)
     begin
         clientP[i] = interface CmdBufClientPort;
-            // all of the putcmd methods conflict so use RevertReg to enforce schedule order
+            // all of the putcmd methods conflict so use PulseWire to enforce schedule order
             // implicit condition: tagMgr returns a tag
-            method ActionValue#(RequestTag) putcmd(CmdWithoutTag cmd) if (fixedPrioritySequence[i]);
-                if (i > 0)
-                    fixedPrioritySequence[i-1] <= True;
+			// note the explicit condition only stops i if i-1 goes, however the scheduler does the rest
+            method ActionValue#(RequestTag) putcmd(CmdWithoutTag cmd) if (!inhibit[i]);
+				if (i < valueOf(n)-1)
+					inhibit[i+1].send;
 
                 // get the tag
                 let t <- tagMgr.nextAvailable.get;

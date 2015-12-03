@@ -143,29 +143,19 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
     FIFOF#(RequestTag) restartTag <- mkGFIFOF(True,False);
     FIFOF#(void) pagedResponseReceived <- mkBypassFIFOF;
 
-    Stmt pagedStmt = seq
-        action
-            RequestTag tag <- cmdbuf.putcmd(
-                CmdWithoutTag {
-                    com: Restart,
-                    cabt: Strict,
-                    cea: 0,
-                    csize: fromInteger(cacheLineBytes) });
+	rule doPagedRestart;
+		pagedResponseReceived.deq;
+        RequestTag tag <- cmdbuf.putcmd(
+            CmdWithoutTag {
+                com: Restart,
+                cabt: Strict,
+                cea: 0,
+                csize: fromInteger(cacheLineBytes) });
 
-            if (verbose)
-                $display($time," INFO: Issuing restart in response to Paged using tag %d",tag);
+        if (verbose)
+            $display($time," INFO: Issuing restart in response to Paged using tag %d",tag);
 
-            restartTag.enq(tag);
-        endaction
-
-        await (!restartTag.notEmpty);               // deq'd when Done response is received
-    endseq;
-
-    let pagedHandlerFSM <- mkFSM(pagedStmt);
-
-    rule startPagedHandler;
-        pagedResponseReceived.deq;
-        pagedHandlerFSM.start;
+        restartTag.enq(tag);
     endrule
 
 
@@ -189,6 +179,8 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
 
     // processBufWrite conflicts with reissueFlushed because of addressLUT.lookup
 
+	(* descending_urgency="enqReissueFlushed,enqStreamRead" *)
+
     rule enqReissueFlushed if (nextFlushedTag matches tagged Valid .flushedTag);
         // get address of the flushed command
         let idxReissue <- addressLUT.lookup(flushedTag);
@@ -205,10 +197,10 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
         nextFetch.enq(nextStreamRead.first);
         nextStreamRead.deq;
     endrule
+	
+	(* descending_urgency="doPagedRestart,issueNextFetch" *)
 
-
-
-    rule issueNextFetch if (pagedHandlerFSM.done && !pagedResponseReceived.notEmpty);
+    rule issueNextFetch if (!restartTag.notEmpty);
         nextFetch.deq;
         
         // issue read

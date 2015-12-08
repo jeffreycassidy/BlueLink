@@ -58,6 +58,7 @@ endmodule
 interface ResourceManager#(numeric type ni);
     interface Get#(UInt#(ni))   nextAvailable;
 
+    method Action               lock(UInt#(ni) ri);
     method Action               unlock(UInt#(ni) ri);
 
     method Action               clear;
@@ -76,6 +77,9 @@ module mkResourceManager#(Integer n,Bool init,Bool bypass)(ResourceManager#(ni))
     // resource accessor methods used with map/mapM
     function Action doClear(Resource r) = r.clear;
     function Bool   isAvailable(Resource r) = r.available;
+
+    // lock a specific resource
+    method Action lock(UInt#(ni) t) = resources[t].lock;
 
     // acquire sequences after free/clear if bypass is enabled
     method Action unlock(UInt#(ni) t) = resources[t].unlock;

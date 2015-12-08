@@ -82,7 +82,7 @@ work:
 
 vsim_bluelink:
 	vlib vsim_bluelink
-	vlog -work vsim_bluelink -timescale 1ns/1ps '+define+BSV_ASSIGNMENT_DELAY=#1' MLAB_0l.v
+	vlog -work vsim_bluelink -timescale 1ns/1ps '+define+BSV_ASSIGNMENT_DELAY=#1' Altera/MLAB_0l.v
 
 # compile all of the Bluespec libraries into their own Modelsim lib
 bsvlibs:

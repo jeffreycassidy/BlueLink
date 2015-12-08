@@ -19,6 +19,11 @@ import ResourceManager::*;
 
 import Assert::*;
 
+typedef union tagged {
+    void        Any;
+    RequestTag  SpecificTag;
+} TagSpecifier deriving(Eq,Bits);
+
 typedef struct {
     PSLCommand              com;
     PSLTranslationOrdering  cabt;
@@ -48,7 +53,7 @@ typedef struct {
 
 
 interface CmdBufClientPort#(numeric type brlat);
-    method ActionValue#(RequestTag)         putcmd(CmdWithoutTag cmd);
+    method ActionValue#(RequestTag)         putcmd(TagSpecifier tagreq,CmdWithoutTag cmd);
     interface Get#(Response)                response;
 
     interface PSLBufferInterface            buffer;
@@ -86,6 +91,10 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
         Alias#(UInt#(4),clientIndex),
         Bits#(RequestTag,nbtag));
 
+    Bool showBufferWrites=True;
+    Bool showBufferReads=True;
+    Bool showCommands=True;
+
     HCons#(MemSynthesisStrategy,HNil) syn = hCons(AlteraStratixV,hNil);
 
     // keep track of which client issued which command
@@ -96,14 +105,17 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
 
 
     // tag manager keeps track of which tags are available
-    // Bypass = True causes big problems meeting timing
-    ResourceManager#(nbtag) tagMgr <- mkResourceManager(ntags,False,True);
+    // Bypass = True (same-tag unlock->lock in single cycle) causes big problems meeting timing
+    ResourceManager#(nbtag) tagMgr <- mkResourceManager(ntags,False,False);
 
     FIFO#(CacheCommand) oCmd <- mkPipelineFIFO;
 
     Vector#(n,CmdBufClientPort#(brlat)) clientP;
 
-    Wire#(Tuple2#(clientIndex,BufferWrite))         bwWire <- mkWire;
+
+	Reg#(Maybe#(BufferWrite))						bwReq    <- mkDReg(tagged Invalid);
+	Reg#(Maybe#(clientIndex))						bwClient <- mkDReg(tagged Invalid);
+
     RWire#(Tuple2#(clientIndex,BufferReadRequest))  brWire <- mkRWire;
     Wire#(Bit#(512))                                brData <- mkWire;
 
@@ -129,6 +141,27 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
 		tagMgr.unlock(rTagToUnlock);			// implicit condition: rTagToUnlock has value
 	endrule
 
+    RWire#(RequestTag) specificTagToLock <- mkRWire;
+    let pwTagLocked <- mkPulseWire;
+
+    rule doLockSpecificTag if (specificTagToLock.wget matches tagged Valid .v);
+        tagMgr.lock(v);
+        pwTagLocked.send;
+    endrule
+
+    rule checkSpecificLockSuccess if (specificTagToLock.wget matches tagged Valid .v);
+        dynamicAssert(pwTagLocked,"specificTagToLock was asserted, but failed to lock the tag");
+    endrule
+
+
+    if (showBufferWrites)
+        rule showBufferWrite if (bwReq matches tagged Valid .v);
+            $display($time," INFO: CmdBuf received buffer write for client %d: ",bwClient.Valid,fshow(v));
+            dynamicAssert(isValid(bwClient),"Buffer write received but no client specified");
+        endrule
+
+
+
 
 	Vector#(n,PulseWire) inhibit <- replicateM(mkPulseWire);
 
@@ -138,12 +171,21 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
             // all of the putcmd methods conflict so use PulseWire to enforce schedule order
             // implicit condition: tagMgr returns a tag
 			// note the explicit condition only stops i if i-1 goes, however the scheduler does the rest
-            method ActionValue#(RequestTag) putcmd(CmdWithoutTag cmd) if (!inhibit[i]);
+            method ActionValue#(RequestTag) putcmd(TagSpecifier tagreq,CmdWithoutTag cmd) if (!inhibit[i]);
 				if (i < valueOf(n)-1)
 					inhibit[i+1].send;
 
-                // get the tag
-                let t <- tagMgr.nextAvailable.get;
+
+                RequestTag t;
+
+                if (tagreq matches tagged SpecificTag .tag)
+                begin
+                    t = tag;
+                    specificTagToLock.wset(tag);
+//                    dynamicAssert(tagStatus[tag].free,"Requested to issue command with specific tag, but tag is busy");
+                end
+                else
+                    t <- tagMgr.nextAvailable.get;
 
                 // store command and indicate which client originated it
                 dynamicAssert(t < fromInteger(ntags),"Invalid tag specified");
@@ -172,13 +214,16 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
                             dynamicAssert(last(brClDelay) matches tagged Valid .cl &&& cl == fromInteger(i) ? True : False,
                                 "Client responded to buffer read request out of turn");
                             brData <= brdata;
+
+                            if(showBufferReads)
+                                $display($time," INFO: Buffer read returned data %X",brdata);
                         endmethod
                     endinterface
                 endinterface
 
                 // forward buffer writes if client is selected
                 interface ReadOnly readdata;
-                    method BufferWrite _read if (bwWire matches { .cl, .bw } &&& cl == fromInteger(i)) = bw;
+                    method BufferWrite _read if (bwClient matches tagged Valid .cl &&& cl == fromInteger(i)) = bwReq.Valid;
                 endinterface
             endinterface
         endinterface;
@@ -194,7 +239,6 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
                 dynamicAssert(resp.rtag < fromInteger(ntags),"Invalid tag specified");
 
                 // steer towards the requesting client whether the downstream module consumes it or not
-                // MLAB followed by flop, probably OK for timing
                 let cl <- tagClientMap.lookup[0](truncate(resp.rtag));
                 pslResponse <= tagged Valid tuple2(cl, Response { rtag: resp.rtag, response: resp.response, rcredits: resp.rcredits });
 
@@ -222,7 +266,8 @@ module mkCmdBuf#(Integer ntags)(CacheCmdBuf#(n,brlat))
         interface Put readdata;
             method Action put(BufferWrite bw);
                 let cl <- tagClientMap.lookup[2](truncate(bw.bwtag));
-                bwWire <= tuple2(cl, bw);
+				bwClient <= tagged Valid cl;
+				bwReq    <= tagged Valid bw;
             endmethod
         endinterface
     endinterface

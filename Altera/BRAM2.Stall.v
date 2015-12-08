@@ -109,8 +109,8 @@ module mkBRAM2Stall(CLK,
 
        .clock_enable_core_a                ("USE_INPUT_CLKEN"),//
        .clock_enable_core_b                ("USE_INPUT_CLKEN"),//
-       .read_during_write_mode_port_a      ("DONT_CARE"),
-       .read_during_write_mode_port_b      ("DONT_CARE"),
+       .read_during_write_mode_port_a      ("NEW_DATA_NO_NBE_READ"),			// DONT_CARE fails to simulate with Altera Edition 10.3c (14.1)
+       .read_during_write_mode_port_b      ("NEW_DATA_NO_NBE_READ"),			// OLD_DATA throws a modelsim warning and fails Quartus compile
 
        .enable_ecc                         ("FALSE"),//
        .width_eccstatus                    (3),//

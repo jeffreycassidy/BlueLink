@@ -1,5 +1,7 @@
 package MemScanChain;
 
+import Assert::*;
+
 import AlteraM20k::*;
 import PAClib::*;
 import FIFOF::*;
@@ -103,10 +105,11 @@ endmodule
 //    List#(BRAM_DUAL_PORT_Stall#(offsT,dataT))   br  <- List::replicateM(valueOf(nBanks),mkBRAM2Stall(bankDepth));
 //    List#(BRAM_PORT_SplitRW#(offsT,dataT))      brs <- List::mapM(mkBRAMPortSplitRW, List::map(getPortA,br));
 
-module mkMemScanChain#(Vector#(nBanks,BRAM_PORT_SplitRW#(offsT,dataT)) brport,PipeOut#(MemItem#(UInt#(naddr),dataT)) pi)
+module mkMemScanChain#(Vector#(nBanks,BRAM_PORT_SplitRW#(UInt#(noffs),dataT)) brport,PipeOut#(MemItem#(UInt#(naddr),dataT)) pi)
     (PipeOut#(dataT))
     provisos (
-        Bits#(offsT,noffs),
+        Add#(noffs,nbank,naddr),
+        Add#(1,__some,nBanks),
         Alias#(addrT,UInt#(naddr)),
         Alias#(dataT,Bit#(512))
     );
@@ -114,9 +117,9 @@ module mkMemScanChain#(Vector#(nBanks,BRAM_PORT_SplitRW#(offsT,dataT)) brport,Pi
     // The scan chain elements
     Vector#(nBanks,PipeOut#(MemItem#(addrT,dataT))) el;
 
-    el[0]  <- mkMemScanChainElement(0, brs[0],f_FIFOF_to_PipeOut(inFifo));
+    el[0]  <- mkMemScanChainElement(0, brport[0],pi);
 
-    for(Integer i=0;i<valueOf(nBanks);i=i+1)
+    for(Integer i=1;i<valueOf(nBanks);i=i+1)
         el[i] <- mkMemScanChainElement(i, brport[i], el[i-1]);
 
     // Check that output is data only

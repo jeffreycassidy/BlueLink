@@ -103,8 +103,23 @@ module afu (
 
 // Insert code here
 
+  // power-on reset generation (hold RST_N low for 1 cycle, and delay for 4 cycles when a reset is provided)
+  // delay enables register duplication to ease fanout pressures
+
+  // active-high reset signal from PSL
+  assign rst_in = ha_jval && ha_jcom == 8'h80;
+
+  // delayed active-low reset signal from PSL
+  reg [1:4] rstN_delay = 4'b0000;
+
+  always@(posedge ha_pclock)
+  begin
+    rstN_delay <= { ~rst_in, rstN_delay[1:3] };
+  end
+
+
   `DUTMODULETYPE afurev(
-    .RST_N(rst_n_i),
+    .RST_N(rstN_delay[4]),
 	.ha_brad(ha_brad_rev),
 	.ah_cvalid(ah_cvalid_i),
 	.ha_brtag(ha_brtag_rev),
@@ -162,15 +177,6 @@ module afu (
 	.ah_brlat(ah_brlat_rev)
 );
 
-  // power-on reset generation
-  reg rst_d = 1'b0;
-
-  always@(posedge ha_pclock)
-  begin
-    rst_d <= 1'b1;
-  end
-
-  assign rst_n_i = rst_d;
 
 
   assign ha_brad_rev = ha_brad;

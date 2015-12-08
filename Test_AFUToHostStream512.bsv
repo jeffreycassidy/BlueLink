@@ -1,6 +1,7 @@
 package Test_AFUToHostStream512;
 
 import BuildVector::*;
+import CAPIStream::*;
 
 import Common::*;
 
@@ -22,6 +23,9 @@ import AFUHardware::*;
 import Reserved::*;
 import BLProgrammableLUT::*;
 import BDPIPipe::*;
+
+import FIFOF::*;
+import SpecialFIFOs::*;
 
 import Endianness::*;
 
@@ -53,22 +57,13 @@ typedef struct {
 } AFUToHostWED deriving(Bits,Eq);
 
 
-module mkAFU_AFUToHostStream512#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(2));
+module mkAFU_AFUToHostStream512#(PipeOut#(Bit#(32)) pi)(DedicatedAFU#(2));
     //// WED reg
     SegReg#(AFUToHostWED,2,512) wedreg <- mkSegReg(HostNative,unpack(?));
     AFUToHostWED wed = wedreg.entire;
 
 
 	HCons#(MemSynthesisStrategy,HNil) syn = hCons(AlteraStratixV,hNil);
-
-
-    //// Reset controller
-    Stmt rststmt = seq
-        noAction;
-        $display($time," INFO: AFU Reset FSM completed");
-    endseq;
-    
-    FSM rstfsm <- mkFSM(rststmt);
 
 
     
@@ -79,44 +74,64 @@ module mkAFU_AFUToHostStream512#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(2)
 
 
     //// Host -> AFU stream controller
+    AFUToHostStreamIfc#(Bit#(512)) afu2host <- mkAFUToHostStream512(syn,16,16,cmdbuf.client[0],EndianSwap);
 
-    let pwStart <- mkPulseWire;
-    let pwFinish <- mkPulseWire;
 
-    let streamctrl <- mkAFUToHostStream512(syn,16,16,cmdbuf.client[0],EndianSwap,stream);
+	// Status controls & return values
 
-    FIFO#(void) ret <- mkFIFO1;
+	FIFOF#(void) startReq <- mkGFIFOF1(True,False);
+	FIFOF#(void) finishReq <- mkGFIFOF1(True,False);
 
+	Reg#(Bool) rstDone <- mkReg(False);
     Reg#(Bool) streamDone <- mkReg(False);
     Reg#(Bool) masterDone <- mkReg(False);
+
+    FIFO#(AFUReturn) ret <- mkFIFO1;
+
 
     // unpack the WED
     EAddress64 size  = unpackle(wed.size);
     EAddress64 eaDst = unpackle(wed.eaDst);
 
+
     Stmt ctlstmt = seq
+		// reset logic
         masterDone <= False;
         streamDone <= False;
-        await(pwStart);
+		rstDone <= True;
+
+		// await the start command
+		startReq.deq;
         action
             $display($time," INFO: AFU Master FSM starting");
             $display($time,"      Size:          %016X",size);
             $display($time,"      Start address: %016X",eaDst);
-            streamctrl.start(eaDst.addr,size.addr);
+            afu2host.ctrl.start(eaDst.addr,size.addr);
         endaction
 
-		repeat(1000) noAction;
+		while(!afu2host.ctrl.done)
+			action
+				stream.deq;
+				afu2host.data.put(stream.first);
+			endaction
+
         action
-            await(streamctrl.done);
+            await(afu2host.ctrl.done);
             $display($time," INFO: AFU Master FSM copy complete");
             streamDone <= True;
         endaction
-        await(pwFinish);
+
+		finishReq.deq;
         masterDone <= True;
-        ret.enq(?);
+        ret.enq(Done);
     endseq;
 
-    let ctlfsm <- mkFSMWithPred(ctlstmt,rstfsm.done);
+    let ctlfsm <- mkFSM(ctlstmt);
+
+	let kickstart <- mkOnce(ctlfsm.start);
+	rule alwaysStartMain;
+		kickstart.start;
+	endrule
 
 
 
@@ -140,8 +155,7 @@ module mkAFU_AFUToHostStream512#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(2)
                 if (i matches tagged DWordWrite { index: .dwi, data: .dwd })
                 begin
                     case (dwi) matches
-                        4: pwStart.send;
-                        5: pwFinish.send;
+                        5: finishReq.enq(?);
                         default: noAction;
                     endcase
 
@@ -165,22 +179,14 @@ module mkAFU_AFUToHostStream512#(PipeOut#(Bit#(32)) pi)(DedicatedAFUNoParity#(2)
 
     endinterface
 
-    method Action parity_error_jobcontrol   = noAction;
-    method Action parity_error_bufferread   = noAction;
-    method Action parity_error_bufferwrite  = noAction;
-    method Action parity_error_mmio         = noAction;
-    method Action parity_error_response     = noAction;
-
-    method Action start if (rstfsm.done);
-        ctlfsm.start;
-    endmethod
+    method Action start = startReq.enq(?);
 
     method ActionValue#(AFUReturn) retval;
         ret.deq;
-        return Done;
+        return ret.first;
     endmethod
 
-    interface FSM rst = rstfsm;
+    method Bool rst = rstDone;
 
 endmodule
 
@@ -228,7 +234,7 @@ module mkSyn_AFUToHost512(AFUHardware#(2));
 
     // AFU instantiation & wrapping
     let dut <- mkAFU_AFUToHostStream512(iPipeT);
-    let wrap <- mkDedicatedAFUNoParity(False,False,dut);
+    let wrap <- mkDedicatedAFU(dut);
 
     AFUHardware#(2) hw <- mkCAPIHardwareWrapper(wrap);
     return hw;

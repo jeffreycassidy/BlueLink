@@ -32,17 +32,16 @@ import CAPIStream::*;
 
 
 // Export only the public items (there are helper classes that should not be visible)
-export mkHostToAFUBulk, CAPIStream::*;
+//export mkHostToAFUBulk, HostToAFUBulkIfc, CAPIStream::*;
 
 
 
 /** Module for bulk (possibly out-of-order) transfer from host to AFU using multiple parallel tags. Does not perform buffering
- * or width adaptation, for maximum leanness.
+ * or width adaptation, for maximum leanness. Output is tagged with an index (of polymorphic width) to give order.
  * 
  * *** REQUIRES COMPILATION WITH -aggressive-conditions ***
  * 
- * Issues commands when able on the supplied CmdBufClientPort. Since command tags are available from the manager only when completed,
- * can use that as an implicit buffer-management scheme. 
+ * Issues commands when able on the supplied CmdBufClientPort.
  *
  * For wTransfer = 512b (64B) cache line
  *
@@ -60,61 +59,66 @@ export mkHostToAFUBulk, CAPIStream::*;
  * Some requests may take a very long time to complete because of page faults etc. Since these are consecutive, the page fault
  * occurs on the first address of the page and subsequent requests are blocked anyway.
  *
- * TODO: Deal correctly with PAGED response? (or is this unnecessary in Abort mode?)
  * TODO: Graceful reset logic
  */
 
+interface HostToAFUBulkIfc#(type idxT,type addrT,type dataT);
+	interface StreamControl#(addrT)		ctrl;
+	interface Get#(Tuple2#(idxT,dataT)) data;
+endinterface
+
 module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy endianPolicy)
-    (Tuple2#(StreamControl,PipeOut#(Tuple2#(UInt#(nOutputIdx),Bit#(wTransfer)))))
+    (HostToAFUBulkIfc#(UInt#(nOutputIdx),UInt#(64),dataT))
     provisos (
         Add#(nOutputIdx,__some,64),
-        NumAlias#(512,wTransfer),
+        Bits#(dataT,512),
         Add#(__dummy,nTransferOffset,nOutputIdx),
         NumAlias#(6,nTransferOffset),
         Bits#(RequestTag,nTagIdx)
     );
 
 
-    // synthesis options
+    // synthesis options & checks
     HCons#(MemSynthesisStrategy,HNil) syn = hCons(AlteraStratixV,hNil);
     staticAssert(nTags <= valueOf(TExp#(nTagIdx)),"Inadequate address bits specified for the chosen number of tags");
-    Bool verbose=False;//True;
+    Bool verbose=False;
 
-    // Transfer counters
-    Reg#(UInt#(64))             eaBase          <- mkReg(0);
-    Count#(UInt#(nOutputIdx))   cacheLineIndex  <- mkCount(0);
-    Reg#(UInt#(nOutputIdx))     cacheLineCount  <- mkReg(0);
+    // Transfer counter
+	Reg#(UInt#(64))							eaBase	    <- mkReg(0);
+	StreamAddressGen#(UInt#(nOutputIdx)) 	idxStream   <- mkStreamAddressGen(cacheLineBytes);
 
-    FIFOF#(UInt#(nOutputIdx)) nextReadIndex <- mkFIFOF;
-
-
-    // Command tag status
-    List#(TagStatusIfc) tagStatus <- List::replicateM(nTags,mkTagStatus);
-
-    let addressLUT <- mkZeroLatencyLookup(syn,nTags);
-
-    function EAddress64 toEAddress64(UInt#(nOutputIdx) i) = EAddress64 { addr: eaBase + (extend(i) << log2(cacheLineBytes)) };
+    // Command tag information
+    List#(TagStatusIfc) 				tagStatus 		<- List::replicateM(nTags,mkTagStatus);
+    Lookup#(nTagIdx,UInt#(nOutputIdx))	tagAddressLUT 	<- mkZeroLatencyLookup(syn,nTags);
 
     // Status control
-    Wire#(Tuple2#(UInt#(64),UInt#(nOutputIdx))) wStart <- mkWire;
+    Wire#(Tuple2#(UInt#(64),UInt#(64))) wStart <- mkWire;
+
+
+	// Command state
+
+    FIFOF#(UInt#(64)) nextStreamRead <- mkLFIFOF;
+
+    FIFOF#(RequestTag) restartTag <- mkGFIFOF(True,False);		// holds the command tag for the restart
+    FIFOF#(void) pagedResponseReceived <- mkBypassFIFOF;
 
     // Output
-    Reg#(Maybe#(Tuple2#(UInt#(nOutputIdx),Bit#(wTransfer)))) o <- mkDReg(tagged Invalid);
+    Reg#(Maybe#(Tuple2#(UInt#(nOutputIdx),dataT))) o <- mkDReg(tagged Invalid);
 
 
     // reset everything 
     rule doTransferStart if (wStart matches { .eaIn, .countIn });
+		// ditch existing tags
         for(Integer i=0;i<nTags;i=i+1)
             tagStatus[i].drain;
-        eaBase          <= eaIn;
-        cacheLineCount  <= countIn;
-        cacheLineIndex  <= 0;
 
-        nextReadIndex.clear;
+		// set up effective address counters (including alignment checks)
+		eaBase <= eaIn;
+		idxStream.ctrl.start(0,truncate(countIn));
 
         if (verbose)
         begin
-            if (cacheLineCount == 0)
+            if (countIn == 0)
                 $display($time," INFO: Terminating host->afu bulk transfer");
             else 
                 $display($time," INFO: Starting host->afu bulk transfer for %x lines starting at %x",countIn,eaIn);
@@ -127,6 +131,7 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Paged response handling
 
+	// find next flushed tag, if any
     function Maybe#(RequestTag) nextFlushedTag;
         Maybe#(RequestTag) t = tagged Invalid;
         Integer i;
@@ -140,22 +145,23 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
     endfunction
 
 
-    FIFOF#(RequestTag) restartTag <- mkGFIFOF(True,False);
-    FIFOF#(void) pagedResponseReceived <- mkBypassFIFOF;
 
-	rule doPagedRestart;
+	rule issueRestartOnPaged;
 		pagedResponseReceived.deq;
         RequestTag tag <- cmdbuf.putcmd(
+            Any,
             CmdWithoutTag {
                 com: Restart,
                 cabt: Strict,
                 cea: 0,
                 csize: fromInteger(cacheLineBytes) });
 
-        if (verbose)
-            $display($time," INFO: Issuing restart in response to Paged using tag %d",tag);
+      	$display($time," INFO: Issuing restart in response to Paged using tag %d",tag);
+
+		nextStreamRead.clear;
 
         restartTag.enq(tag);
+		dynamicAssert(!restartTag.notEmpty,"Paged response received before prior restart had completed");
     endrule
 
 
@@ -165,55 +171,47 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Transfer commands
 
-    FIFOF#(UInt#(nOutputIdx)) nextFetch <- mkBypassFIFOF;
-    FIFOF#(UInt#(nOutputIdx)) nextStreamRead <- mkFIFOF;
 
-
-    // issue next read command if still work remaining
-	rule enqNextStreamRead if (cacheLineIndex != cacheLineCount);
-        cacheLineIndex.incr(1);
-        nextStreamRead.enq(cacheLineIndex);          // Use a 2-entry FIFO to decouple backpressure
-    endrule
-
-
-
-    // processBufWrite conflicts with reissueFlushed because of addressLUT.lookup
 
 	(* descending_urgency="enqReissueFlushed,enqStreamRead" *)
 
     rule enqReissueFlushed if (nextFlushedTag matches tagged Valid .flushedTag);
         // get address of the flushed command
-        let idxReissue <- addressLUT.lookup(flushedTag);
+        let idxReissue <- tagAddressLUT.lookup(flushedTag);
 
-        tagStatus[flushedTag].reissue;
+//        tagStatus[flushedTag].reissue;
 
-        nextFetch.enq(idxReissue);
+        nextStreamRead.enq(eaBase + extend(idxReissue));
 
         if (verbose)
             $display($time," INFO: Enqueueing reissue for flushed tag %d",flushedTag);
     endrule
 
-    rule enqStreamRead;
-        nextFetch.enq(nextStreamRead.first);
-        nextStreamRead.deq;
+    // issue next read command if still work remaining
+	rule enqStreamRead if (!idxStream.ctrl.done && !restartTag.notEmpty && !pagedResponseReceived.notEmpty);
+		let idx <- idxStream.next.get;
+        nextStreamRead.enq(extend(idx)+eaBase);
     endrule
 	
-	(* descending_urgency="doPagedRestart,issueNextFetch" *)
+	(* descending_urgency="issueRestartOnPaged,issueNextFetch" *)
 
-    rule issueNextFetch if (!restartTag.notEmpty);
-        nextFetch.deq;
+    rule issueNextFetch;
+        nextStreamRead.deq;									// implicit condition: fetch command enq'd
         
         // issue read
-		RequestTag tag <- cmdbuf.putcmd(                // implicit condition: able to issue command
+		RequestTag tag <- cmdbuf.putcmd(                	// implicit condition: able to issue command
+            Any,
 			CmdWithoutTag {
-			 	com: Read_cl_s,
-				cabt: Strict,
-				cea: toEAddress64(nextFetch.first),
-				csize: fromInteger(cacheLineBytes) });
+			 	com: 	Read_cl_na,
+				cabt: 	Strict,
+				cea: 	EAddress64 { addr: nextStreamRead.first},
+				csize: 	fromInteger(cacheLineBytes) });
 
-        // WARNING!! If tags A and B were flushed then tag addressLUT is holding their ea. reissuing read for aA using B will
+        // WARNING!! If tags A and B were flushed then tag tagAddressLUT is holding their ea. reissuing read for aA using B will
         // clobber B's address in the LUT. NEED TO FIX
         // mark tag as in-use
+        //
+        // Although CmdBuf grants tags in ascending order, other requestors may lock up the low-order tags which will cause grief.
         //
         // As-is, can issue on a tag with status flushed
 //        dynamicAssert(tagStatus[tag].current == Done,"Trying to start a read with a tag where status != Done");
@@ -223,7 +221,8 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
             $display($time," INFO: Issuing read using tag %d",tag);
 
         // save address offset for bulk transfer
-        addressLUT.write(tag,nextFetch.first);
+		messageM("Using broken tagAddressLUT logic - addresses stored are incorrect for Paged restarts");
+        tagAddressLUT.write(tag,truncate((nextStreamRead.first-eaBase) >> log2(cacheLineBytes)));
     endrule
 
 
@@ -290,7 +289,8 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Buffer write handling
 
-//    (* descending_urgency="processBufWrite,enqReissueFlushed,enqStreamRead" *)
+    // processBufWrite conflicts with reissueFlushed because of tagAddressLUT.lookup (could solve by adding another LUT port, but
+	// that would be expensive relative to its frequency of use (will delay restart by at most a few cycles when paged)
     (* preempts="processBufWrite,enqReissueFlushed" *)
     rule processBufWrite;
         // check for valid bwad
@@ -298,26 +298,27 @@ module mkHostToAFUBulk#(Integer nTags,CmdBufClientPort#(2) cmdbuf,EndianPolicy e
             "Invalid bwad value  = transfersPerCacheLine");
 
         // lookup the index for this read tag, calculate its position in the output stream
-        let readCmdIdx <- addressLUT.lookup(cmdbuf.buffer.readdata.bwtag);
+        let readCmdIdx <- tagAddressLUT.lookup(cmdbuf.buffer.readdata.bwtag);
         UInt#(nOutputIdx) oIdx = (extend(readCmdIdx) << log2(transfersPerCacheLine)) | extend(cmdbuf.buffer.readdata.bwad);
 
         // write out
-        o <= tagged Valid tuple2(oIdx,
-            endianPolicy == HostNative ? cmdbuf.buffer.readdata.bwdata : endianSwap(cmdbuf.buffer.readdata.bwdata));
+        o <= tagged Valid tuple2(oIdx,unpack(
+            endianPolicy == HostNative ? cmdbuf.buffer.readdata.bwdata : endianSwap(cmdbuf.buffer.readdata.bwdata)));
     endrule
 
-    let op <- mkSource_from_maybe_constant(o);
+    interface StreamControl ctrl;
+        method Action start(UInt#(64) ea0,UInt#(64) size) = wStart._write(tuple2(ea0, size));
+        method Action abort = wStart._write(tuple2(0,0));
 
-    return tuple2(
-        interface StreamControl;
-            method Action start(UInt#(64) ea0,UInt#(64) size) = wStart._write(tuple2(ea0, truncate(size >> log2(cacheLineBytes))));
-            method Action abort = wStart._write(tuple2(0,0));
+        method Bool done = idxStream.ctrl.done && List::all ( \== (TagStatus'(Done)), List::map(read,tagStatus));
+    endinterface
 
-            method Bool done = cacheLineIndex == cacheLineCount && List::all ( \== (TagStatus'(Done)), List::map(read,tagStatus));
-        endinterface,
-
-        op
-    );
+	interface Get data;
+		method ActionValue#(Tuple2#(UInt#(nOutputIdx),dataT)) get if (o matches tagged Valid .v);
+			return v;
+		endmethod
+	endinterface
 endmodule
+
 
 endpackage

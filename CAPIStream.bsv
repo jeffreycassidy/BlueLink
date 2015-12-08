@@ -13,8 +13,8 @@ Integer transfersPerCacheLine	= cacheLineBytes/transferBytes;	// 128/64 = 2
 
 typedef Bit#(1024) CacheLine;
 
-interface StreamControl;
-    method Action   start(UInt#(64) ea,UInt#(64) size);
+interface StreamControl#(type addrT);
+    method Action   start(addrT ea,addrT size);
 
     (* always_ready *)
     method Bool     done;
@@ -23,40 +23,59 @@ interface StreamControl;
 endinterface
 
 
-/** Create a stream counter, which gives a Tuple2#(StreamControl,Get#(UInt#(64)))
- *
- * The StreamControl holds the start and done methods, while Get#() returns the next address in the sequence and bumps the address
- * up. 
- */
 
-module mkStreamCounter(Tuple2#(StreamControl,Get#(UInt#(64))));
+
+interface StreamAddressGen#(type addrT);
+	interface StreamControl#(addrT) ctrl;
+	interface Get#(addrT)			next;
+endinterface
+
+module mkStreamAddressGen#(Integer stride)(StreamAddressGen#(UInt#(na)));
 	// control regs
-    Reg#(UInt#(64)) eaStart   <- mkReg(0);
-    Reg#(UInt#(64)) ea        <- mkReg(0);
-    Reg#(UInt#(64)) eaEnd     <- mkReg(0);
+    Reg#(UInt#(na)) ea    	<- mkReg(0);
+    Reg#(UInt#(na)) eaLast	<- mkReg(0);
 
-    return tuple2(
-        interface StreamControl;
-            method Action start(UInt#(64) ea0,UInt#(64) size);
-                eaStart <= ea0;
-                ea      <= ea0;
-                eaEnd   <= ea0+size;
+	Reg#(Bool)		eaDone	<- mkReg(True);
 
-                // check request valid
-                dynamicAssert(ea0  % fromInteger(cacheLineBytes) == 0,  "Effective address is not properly aligned");
-                dynamicAssert(size % fromInteger(cacheLineBytes) == 0,  "Transfer size is not properly aligned");
-            endmethod
-        
-            method Bool done = ea==eaEnd;
-        endinterface
-        ,
-        interface Get;
-            method ActionValue#(UInt#(64)) get if (ea != eaEnd);     // force schedule after start
-                ea <= ea + fromInteger(cacheLineBytes);
-                return ea;
-            endmethod
-        endinterface
-    );
+	let pwCount <- mkPulseWire;
+	let wStart <- mkWire;
+
+	(* preempts="startNew,upCount" *)
+
+	rule startNew if (wStart matches { .ea0, .size });
+		ea      <= ea0;
+       	eaLast	<= ea0+size-fromInteger(stride);
+
+		eaDone	<= size == 0;
+	endrule
+
+	rule upCount if (pwCount);
+		ea <= ea + fromInteger(stride);
+
+		if (ea == eaLast)
+			eaDone <= True;
+	endrule
+
+    interface StreamControl ctrl;
+        method Action start(UInt#(na) ea0,UInt#(na) size);
+            // check request valid
+            dynamicAssert(ea0  % fromInteger(stride) == 0,  "Effective address is not properly aligned");
+            dynamicAssert(size % fromInteger(stride) == 0,  "Transfer size is not properly aligned");
+
+			wStart <= tuple2(ea0,size);
+        endmethod
+
+		method Action abort = wStart._write(tuple2(0,0));
+    
+        method Bool done = eaDone;
+    endinterface
+
+    interface Get next;
+        method ActionValue#(UInt#(na)) get if (!eaDone);
+			pwCount.send;
+			return ea;
+        endmethod
+    endinterface
 
 endmodule
 

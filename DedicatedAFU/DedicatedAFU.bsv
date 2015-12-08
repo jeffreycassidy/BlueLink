@@ -1,5 +1,6 @@
 package DedicatedAFU;
 
+import Assert::*;
 import AFU::*;
 import StmtFSM::*;
 import PSLTypes::*;
@@ -10,29 +11,29 @@ import FIFO::*;
 import MMIO::*;
 import MMIOConfig::*;
 
+import DReg::*;
+
 import Vector::*;
 import Endianness::*;
 
-interface DedicatedAFUNoParity#(numeric type brlat);
+/** The interface to be implemented by the wrapped module */
+
+interface DedicatedAFU#(numeric type brlat);
     interface Vector#(2,WriteOnly#(Bit#(512)))          wedwrite;
 
     interface ClientU#(CacheCommand,CacheResponse)      command;
     interface AFUBufferInterface#(brlat)                buffer;
     interface Server#(MMIORWRequest,MMIOResponse)       mmio;
 
-    method Action parity_error_jobcontrol;
-    method Action parity_error_bufferread;
-    method Action parity_error_bufferwrite;
-    method Action parity_error_mmio;
-    method Action parity_error_response;
-
     // Task control
     method Action                   start;
     method ActionValue#(AFUReturn)  retval;
 
-    // reset
-    interface FSM                   rst;
+    // Reset status (True -> complete)
+    method Bool rst;
 endinterface
+
+
 
 typedef union tagged {
     void        Unknown;
@@ -44,49 +45,60 @@ typedef union tagged {
     UInt#(64)   Error;
 } DedicatedAFUStatus deriving(Eq,Bits,FShow);
 
-module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(brlat) afu)(AFU#(brlat));
+module mkDedicatedAFU#(DedicatedAFU#(brlat) afu)(AFU#(brlat));
+    Bool pargen = False;                                // True -> wrapper generates parity
+    Bool parcheck = False;                              // True -> wrapped checks parity
 
-    Reg#(DedicatedAFUStatus)                st <- mkReg(Unknown);
+    Reg#(DedicatedAFUStatus)    st <- mkReg(Unknown);
 
-    Wire#(EAddress64)           jea_in <- mkWire;
+    Wire#(EAddress64)           jeaIn <- mkWire;
 
-    Wire#(CacheCommand)         master_cmd <- mkWire;
+    Wire#(CacheCommand)         wedCmd <- mkWire;
 
-    FIFO#(void) startReq <- mkFIFO1;
+    let pwWedDone <- mkPulseWire;
 
-    PulseWire pw_rst <- mkPulseWire;
-    PulseWire pwDone <- mkPulseWire;
-    PulseWire pw_wed_done <- mkPulseWire;
+    Reg#(Bool) pwDoneQ <- mkDReg(False);
+
+
+
+
+    /** Hardware wrapper throws a hard reset (BSV RST_N) at powerup and whenver a reset command is received
+     * This FSM starts immediately following reset deassertion. Steps:
+     */
 
     Stmt master = seq
-        // Handle reset
-        st <= Resetting;
-        $display($time," INFO: DedicatedAFU entered reset");
+        // Start wrapper reset
+        action
+            $display($time," INFO: DedicatedAFU wrapper entered reset");
+            st <= Resetting;
+        endaction
 
-        afu.rst.start;
-        await(afu.rst.done);
-
-        // Ready, wait for EA to start
-        st <= Ready;
-        pwDone.send;
+        // Wait for client AFU reset to finish
+        action
+            await(afu.rst);
+            $display($time," INFO: Slave AFU reset done, sending jdone pulse");
+            st <= Ready;
+            pwDoneQ <= True;
+        endaction
 
         // Await jea (implicit condition on wire), read WED
         action
-            st <= tagged ReadWED jea_in;
-            $display($time,": INFO - DedicatedAFU entered ReadWED state, ea=",fshow(jea_in));
+            st <= tagged ReadWED jeaIn;
+            $display($time,": INFO - DedicatedAFU entered ReadWED state, ea=",fshow(jeaIn));
         endaction
 
-        noAction;
+        // Issue WED read, wait for completion
+        wedCmd <= CacheCommand { ctag: 0, cch: 0, com: Read_cl_na, cea: st.ReadWED, csize: 128, cabt: Strict };
+        await(pwWedDone);
 
-        master_cmd <= CacheCommand { ctag: 0, cch: 0, com: Read_cl_s, cea: st.ReadWED, csize: 128, cabt: Strict };
+        // Start the AFU
+        action
+            afu.start;
+            st <= Running;
+        endaction
 
-        await(pw_wed_done);
 
-        // Run state machine
-        st <= Running;
-
-        afu.start;
-
+        // Wait for AFU to terminate
         action
             let res <- afu.retval;
 
@@ -95,53 +107,43 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(b
                 tagged Error .e:    st <= tagged Error e;
                 default:            $display($time,": ERROR - DedicatedAFU received invalid result code ",fshow(res));
             endcase
-
         endaction
 
-        // and we're done
+        // and we're done (wait 1 cycle after deasserting jrunning via st above)
 		action
-	        pwDone.send;
-    	    $display($time,": INFO - DedicatedAFU completed");
+	        pwDoneQ <= True;
+    	    $display($time,": INFO - DedicatedAFU completed and sending done pulse");
 		endaction
 
     endseq;
 
+
+    // let master run once per reset
     let masterfsm <- mkFSM(master);
+    let startMaster <- mkOnce(masterfsm.start);
 
-    rule abortMaster if (pw_rst);
-        $display($time,": DedicatedAFU received reset and is aborting master FSM");
-        masterfsm.abort;
+    rule startMasterOnReset;
+        startMaster.start;
     endrule
 
-    rule enqStart if (pw_rst);
-        startReq.enq(?);
-        $display($time,": DedicatedAFU received reset and is enqing startReq");
-    endrule
 
-    rule startMaster;
-        masterfsm.start;
-        startReq.deq;
-        $display($time,": DedicatedAFU starting master FSM");
-    endrule
+    ////// Command issuance
 
     Wire#(CacheCommand) cmd <- mkWire;
 
-    (* preempts="(ping,passcmd),bad" *)
+    (* mutually_exclusive="issueWEDReadCommand,issueAFUCommand" *)
 
-    rule ping if (st matches tagged ReadWED .ea);
-        $display($time,": INFO - In ReadWED state (",fshow(ea),") issuing command ",fshow(master_cmd));
-        cmd <= master_cmd;
-        $display($time,": INFO - Issuing WED read command ",fshow(master_cmd));
+    rule issueWEDReadCommand if (st matches tagged ReadWED .ea);
+        cmd <= wedCmd;
     endrule
 
-    rule passcmd if (st == Running);
+    rule issueAFUCommand;
+        dynamicAssert(st == Running,"AFU attempted to issue a command while not running");
         cmd <= afu.command.request;
     endrule
 
-    rule bad;
-        $display($time,": ERROR - DedicatedAFU received unexpected command from AFU while in status ",fshow(st));
-        $display($time,"    details: ",fshow(afu.command.request));
-    endrule
+
+    ////// MMIO
 
     Server#(MMIORWRequest,MMIOResponse) mmCfg <- mkMMIOStaticConfig(
         DedicatedProcessConfig {
@@ -162,9 +164,10 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(b
 
     ServerARU#(MMIOCommand,MMIOResponse) mmSplit <- mkMMIOSplitter(mmCfg,afu.mmio,mmioAcceptPSA);
 
-    FIFOF#(CacheResponse) afuresp <- mkGLFIFOF(True,False);
 
-    mkConnection(toGet(afuresp),afu.command.response);
+
+
+    //////
 
     interface ClientU command;
         interface ReadOnly request;
@@ -175,24 +178,37 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(b
             method Action put(CacheResponseWithParity crp);
                 if (parity_maybe(parcheck,crp) matches tagged Valid .cr)
                     case (st) matches
-                        tagged ReadWED .*:
-                            if (cr.rtag == 0 && cr.response == Done)
-                                pw_wed_done.send;
+                        tagged ReadWED .ea:
+                            if (cr.rtag == 0)
+                            begin
+                                if (cr.response == Done)
+                                    pwWedDone.send;
+                                else
+                                begin
+                                    $display($time," ERROR: Dedicated AFU failed to read WED, with response");
+                                    dynamicAssert(False,"DedicatedAFU failed to read WED");
+                                end
+                            end
                             else
                             begin
-                                $display($time,": ERROR - DedicatedAFU received unexpected command response while reading WED");
-                                $display($time,"    details: ",fshow(crp));
-                                pw_wed_done.send;       // <==== Added to prevent hangup in init sequence
+                                $display($time," ERROR: Dedicated AFU received unexpected response for tag %d during WED read",cr.rtag);
+                                dynamicAssert(False,"Dedicated AFU received unexpected response");
                             end
 
-                        Running:        afuresp.enq(cr);
-                        default:        $display($time,": ERROR - DedicatedAFU received command response while not running (status ",fshow(st),")");
-                        endcase
+                        tagged Running:
+                            afu.command.response.put(cr);
+
+                        default:
+                        begin
+                            $display($time,": ERROR - DedicatedAFU received command response while not running (status ",fshow(st),")");
+                            dynamicAssert(False,"DedicatedAFU received a response while not running or in WED Read");
+                        end
+                    endcase
                 else
                 begin
                     $display($time,": ERROR - DedicatedAFU received command response with invalid parity");
                     $display($time,"    details: ",fshow(crp));
-                    afu.parity_error_response;
+//                    afu.parity_error_response;
                 end
             endmethod
         endinterface
@@ -208,7 +224,7 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(b
                     begin
                         $display($time,": ERROR - DedicatedAFU received buffer read request with invalid parity, notifying AFU");
                         $display($time,"    details: ",fshow(brp));
-                        afu.parity_error_bufferread;
+//                        afu.parity_error_bufferread;
                     end
                 endmethod
             endinterface
@@ -222,7 +238,7 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(b
             method Action put(BufferWriteWithParity bwp);
                 if (parity_maybe(parcheck,bwp) matches tagged Valid .bw)
                     case (st) matches
-                        tagged ReadWED .*:                         // intercept buffer writes during WED read
+                        tagged ReadWED .*:                  // intercept buffer writes during WED read
                             afu.wedwrite[bw.bwad] <= bw.bwdata;
                         Running:                            // pass through when running
                             afu.buffer.readdata.put(bw);                            
@@ -233,7 +249,7 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(b
                 begin
                     $display($time,": ERROR - DedicatedAFU received buffer write with invalid parity");
                     $display($time,"    details: ",fshow(bwp));
-                    afu.parity_error_bufferwrite;
+//                    afu.parity_error_bufferwrite;
                 end
             endmethod
         endinterface
@@ -246,7 +262,7 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(b
                     mmSplit.request.put(mmreq);
                 else
                 begin
-                    afu.parity_error_mmio;
+//                    afu.parity_error_mmio;
                     $display($time,": ERROR - DedicatedAFU received MMIO command with invalid parity, notifying afu");
                     $display($time,"    details: ",fshow(mmiop));
                 end
@@ -262,28 +278,32 @@ module mkDedicatedAFUNoParity#(Bool pargen,Bool parcheck,DedicatedAFUNoParity#(b
         method Action put(JobControlWithParity jcp);
             if (parity_maybe(parcheck,jcp) matches tagged Valid .jc)
                 case (jc) matches
-                    tagged JobControl { opcode: Start,    jea: .jea  }:   jea_in <= jea;
-                    tagged JobControl { opcode: Reset,    jea: .*    }:   pw_rst.send;
+                    tagged JobControl { opcode: Start,    jea: .jea  }:   jeaIn <= jea;
+                    tagged JobControl { opcode: Reset,    jea: .*    }:   noAction;         // will be caught by the wrapper
                     tagged JobControl { opcode: Timebase, jea: .* }:   $display($time,": DedicatedAFU doesn't support timebase");
                     default:            $display($time,": DedicatedAFU doesn't know what to do with opcode ",fshow(jc.opcode)," [",fshow(pack(jc.opcode)),"]");
                 endcase
             else
-                afu.parity_error_jobcontrol;
+            begin
+                $display($time," ERROR: Parity failure on Job Control interface");
+//                afu.parity_error_jobcontrol;
+            end
         endmethod
     endinterface
 
     interface AFUStatus status;
-        method Bool tbreq = False;
-        method Bool jyield = False;
-        method Bool jrunning = case (st) matches
-            tagged Running: True;
-            tagged ReadWED .*: True;
-            default: False;
-        endcase;
-
+        method Bool tbreq    = False;
+        method Bool jyield   = False;
         method Bool jcack=False;
 
-        method Bool jdone = pwDone;
+        method Bool jrunning = case (st) matches
+            tagged Running:     True;
+            tagged ReadWED .*:  True;
+            default:            False;
+        endcase;
+
+        method Bool jdone = pwDoneQ;
+
         method UInt#(64) jerror = case (st) matches
             tagged Error .e:    e;
             default:            0;

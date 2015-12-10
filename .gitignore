@@ -1,32 +1,58 @@
+# Altera synthesis results
+incremental_db/
+db/
+quartus_output/
+*.rbf
+*.qar
+*.done
+*.fit.*
+*.map.*
+*.pin
+*.qws
+*.log
+*.qarlog
+
+
+# Modelsim simulation output
+transcript
+wlft*
+*.wlf
+*.vstf
+modelsim.ini
+work/
+
+
+# Testbench output files
+output.*
+
+
+# Compiler outputs
 *.so
 *.o
+a.out
+
+
+# BSV-generated files
 mk*.cxx
 mk*.h
 model_mk*.h
 model_mk*.cxx
-.DS_Store
-a.out
 *.ba
-pseries_nvram.*.bin
 mk*.v
 *.bo
 vpi_wrapper_*
 register.[ch]
-*.out
+
+
+# PSLSE files
+pseries_nvram.*.bin
+
+
+# Local testbench files
 host2afu
 afu2host
-.project
-.cproject
-bsvlibs
-register.c
-work
-*.wlf
-transcript
-*.dSYM
-modelsim.ini
-vsim_bluelink
-wlft*
-*.rbf
-*.qar
-*.log
-shim_host.dat
+
+
+# Local library dirs
+vsim_bluelink/
+bsvlibs/

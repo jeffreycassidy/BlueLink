@@ -57,6 +57,11 @@ LD_LIBRARY_PATH     | Needs to contain the path to Bluespec/lib/VPI/g++4 and lib
 capi_env.tcl        | Does some setup for the Modelsim simulation
 
 
+BLUESPECDIR         | The path with the Bluespec libraries (eg /opt/Bluespec/lib)
+BLUELINKDIR         | The root path for the BlueLink library
+
+
+
 Outstanding issues
 ------------------
 

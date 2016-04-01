@@ -28,19 +28,22 @@
 
 // Dual-Ported BRAM (WRITE FIRST)
 module mkBRAM2Stall(CLK,
-             ENA,
+             ENA,           // command input port A
              WEA,
              ADDRA,
              DIA,
-             DOA,
-             DEQA,          // deq pulse for port A
+
+             DOA,           // data output port A
+             DEQA,          // deq pulse for port A (advances the output reg)
+
              ENB,
              WEB,
              ADDRB,
              DIB,
+
              DOB,
-             DEQB           // deq pulse for port B
-             );
+             DEQB
+         );
 
    parameter                      PIPELINED  = 0;
    parameter                      ADDR_WIDTH = 1;
@@ -50,7 +53,7 @@ module mkBRAM2Stall(CLK,
    input                          CLK;
    input                          ENA;
    input                          WEA;
-   input                            DEQA;
+   input                          DEQA;
    input [ADDR_WIDTH-1:0]         ADDRA;
    input [DATA_WIDTH-1:0]         DIA;
    output [DATA_WIDTH-1:0]        DOA;
@@ -58,7 +61,7 @@ module mkBRAM2Stall(CLK,
 
    input                          ENB;
    input                          WEB;
-   input                            DEQB;
+   input                          DEQB;
    input [ADDR_WIDTH-1:0]         ADDRB;
    input [DATA_WIDTH-1:0]         DIB;
    output [DATA_WIDTH-1:0]        DOB;
@@ -66,10 +69,10 @@ module mkBRAM2Stall(CLK,
 
 
    wire                           RENA = ENA & !WEA;
-   wire                             CEA = ENA || DEQA;
+   wire                           CEA = ENA || DEQA;
    wire                           WENA = ENA & WEA;
    wire                           RENB = ENB & !WEB;
-   wire                             CEB = ENB || DEQB;
+   wire                           CEB = ENB || DEQB;
    wire                           WENB = ENB & WEB;
       
    altsyncram

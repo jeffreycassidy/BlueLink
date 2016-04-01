@@ -1,10 +1,3 @@
-BSC_OPTS=-check-assert -p +:MMIO:DedicatedAFU:Core:../BDPIPipe:/home/jcassidy/src/FMHW/modules -aggressive-conditions
-
-BSC_SIM_OPTS=$(BSC_OPTS) -sim
-BSC_VER_OPTS=$(BSC_OPTS) -verilog -opt-undetermined-vals -unspecified-to X
-
-SUBDIRS=Core DedicatedAFU MMIO
-
 test-ResourceManager: ResourceManager.bsv
 	bsc $(BSC_SIM_OPTS) $<
 	bsc $(BSC_SIM_OPTS) -g mkTB_ResourceManager $<
@@ -66,20 +59,6 @@ clean:
 	rm -rf *.so bsvlibs afu2host host2afu *.b[ao] model_*.cxx model_*.cxx mk*.v vpi_wrapper_*.[ch] work *.o mk*.cxx mk*.h model_*.h \
 		register.c *.vstf transcript *.wlf *.dSYM  *.out build.log work vsim_bluelink bsvlibs
 
-test-CmdBuf: mkTB_CmdBuf.v work
-	vsim -c -do "vlog mkTB_CmdBuf.v; vsim -L bsvlibs -L altera_mf_ver mkTB_CmdBuf; force CLK -drive 1'b0, 1'b1 5 -repeat 10; force RST_N -drive 1'b0, 1'b1 10; run -all;"
-	
-	
-mkTB_CmdBuf.v: Test_CmdBuf.bsv CmdBuf.bsv
-	bsc $(BSC_VER_OPTS) -u $<
-	bsc $(BSC_VER_OPTS) -g mkTB_CmdBuf $<
-
-CmdBuf.bo: CmdBuf.bsv
-	bsc $(BSC_VER_OPTS) -u $<
-
-work:
-	vlib work
-
 vsim_bluelink:
 	vlib vsim_bluelink
 	vlog -work vsim_bluelink -timescale 1ns/1ps '+define+BSV_ASSIGNMENT_DELAY=#1' Altera/MLAB_0l.v
@@ -88,9 +67,6 @@ vsim_bluelink:
 bsvlibs:
 	vlib bsvlibs
 	vlog -work bsvlibs -timescale 1ns/1ps +define+BSV_NO_INITIAL_BLOCKS +define+TOP="foo" +define +BSV_ASSIGNMENT_DELAY=\#1 $(BLUESPECDIR)/Verilog/*.v
-
-libs:
-	for i in $(SUBDIRS); do make -C $$i libs; done
 
 remote-sync:
 	rsync -rizt Host stac:~/jcassidy/BlueLink

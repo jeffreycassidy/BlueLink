@@ -5,32 +5,34 @@
  *      Author: jcassidy
  */
 
-
-
-/** Tests a memory
- *
- * Input file (just one): contains lines of memory access commands, either a read or a write:
- * 		<time> <addr> R<port#>
- * 		<time> <addr> W<port#> data
- *
- * Output file contains results:
- * 		<time> <port#> <data>
- */
-
 #include <cinttypes>
 
-struct Command {
-	uint64_t 	t;
+struct Command
+{
+	uint64_t 	time;
 	uint64_t	addr;
 	uint64_t	data;
-	unsigned	port;
 	bool 		write;
 };
 
-struct Response {
-	uint64_t	t;
-	unsigned	port;
+struct Response
+{
+	uint64_t	time;
 	uint64_t	data;
+};
+
+class MultiPortMemory
+{
+public:
+	/// Manage time (must be monotonically increasing)
+	void time(uint64_t t);
+	uint64_t time() const;
+
+};
+
+class MemoryPort
+{
+public:
 };
 
 #include <vector>
@@ -43,17 +45,8 @@ struct Response {
 
 using namespace std;
 
-vector<Command> loadCommands(const string fn);
-vector<Response> loadResponses(const string fn);
-
 int main(int argc,char **argv)
 {
-	const unsigned N=16;
-
-	const unsigned NPorts=2;
-
-	vector<Command> 	cmds	= loadCommands("m20k.stim.txt");
-	vector<Response> 	resps 	= loadResponses("m20k.out.txt");
 
 	array<vector<Response>::const_iterator,NPorts> portRespIt;
 
@@ -155,23 +148,4 @@ vector<Command> loadCommands(const string fn)
 	}
 
 	return cmd;
-}
-
-vector<Response> loadResponses(const string fn)
-{
-	vector<Response> resp;
-
-	uint64_t t,data;
-	unsigned port;
-	char p;
-	ifstream is(fn.c_str());
-
-	while(!is.eof())
-	{
-		is >> dec >> t >> p >> port >> hex >> data;
-		assert(p == 'P');
-		resp.push_back(Response { t, port, data } );
-	}
-
-	return resp;
 }

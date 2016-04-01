@@ -54,3 +54,9 @@ void bdpi_portClose(uint64_t portPtr)
 	p->close();
 }
 
+//void bdpi_doReadWrite(uint32_t* ret,uint64_t portPtr,const uint32_t* data)
+//{
+//	BDPIPort* p = reinterpret_cast<BDPIPort*>(portPtr);
+//	p->readWrite(ret,data);
+//}
+

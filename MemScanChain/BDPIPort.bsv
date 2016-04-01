@@ -12,14 +12,17 @@ import "BDPI" function Action				bdpi_portClose(PortPtr portPtr);
 
 //// end C++
 
-interface BDPIPort#(type dataT);
-	method Status 				status;
-	method ActionValue#(dataT)	read;
-	method Action				write(dataT data);
 
-	method Bool 				done;
+interface BDPIPort#(type readDataT,type writeDataT);
+	method Status 					status;
 
-	method Action 				close;
+	method ActionValue#(readDataT)	read;
+	method Action					write(writeDataT data);
+//	method ActionValue#(readDataT)	readwrite(writeDataT data);
+
+	method Bool 					done;
+
+	method Action 					close;
 endinterface
 
 
@@ -27,6 +30,16 @@ module mkBDPIPort#(BDPIDevice dev,Integer portNum)(BDPIPort#(dataT))
 	provisos(Bits#(dataT,nd));
 
 	Reg#(Maybe#(PortPtr)) portPtrInternalReg <- mkReg(tagged Invalid);
+
+	let getPortPtrFSM <- mkOnce(
+		action
+			let p <- dev.getPortPtr(portNum);
+			portPtrInternalReg <= p;
+		endaction);
+
+	rule getPortPtr;
+		getPortPtrFSM.start;
+	endrule
 
 	// portPtr carries implicit conditions: valid port pointer and clock tick has already been sent to the device
 	Wire#(PortPtr) portPtr <- mkWire;
@@ -42,13 +55,16 @@ module mkBDPIPort#(BDPIDevice dev,Integer portNum)(BDPIPort#(dataT))
 		st <= st_;
 	endrule
 
-	method ActionValue#(dataT) read if (st == Ready);
+	method ActionValue#(readDataT) read if (st == Ready);
 		let o <- bdpi_portGetReadData(portPtr);
 		return o;
 	endmethod
 
-	method Action write(dataT o) if (st == Ready);
+	method Action write(writeDataT o) if (st == Ready);
 		bdpi_portPutWriteData(portPtr,o);
+	endmethod
+
+	method ActionValue#(readDataT) readwrite(writeDataT data) if (st==Ready);
 	endmethod
 
 	method Action close = bdpi_portClose(portPtr);

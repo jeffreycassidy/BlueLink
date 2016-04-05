@@ -6,4 +6,4 @@
 # Line format is as follows:
 # AFU_DEVICE,HOSTNAME:PORT
 #
-afu0.0,localhost:16384
+@CAPI_AFU_DEVICE_NAME@,@CAPI_SIM_HOST@:@CAPI_SIM_PORT@

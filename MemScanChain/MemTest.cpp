@@ -10,6 +10,24 @@
 #include <iomanip>
 #include <iostream>
 
+#include <array>
+
+template<class Command>typename CommandTraits<Command>::Address address(const Command& cmd);
+
+
+
+
+template<class Command>std::array<std::array<bool,N>,N> checkConflicts(const std::array<Command>& cmd)
+{
+	std::array<std::array<bool,N>,N> conflict;
+
+	for(unsigned i=0;i<Np;++i)
+		for(unsigned j=i+1;j<Np;++j)
+			conflict[i][j] = conflict[j][i] = address(cmd[i]) == address(cmd[j]);
+}
+
+
+
 template<
 	typename Address=uint32_t,
 	typename Data=uint64_t,

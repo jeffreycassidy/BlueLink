@@ -30,6 +30,11 @@ void BDPIPort::close()
 	implementClose();
 }
 
+BDPIPort::Status BDPIPort::status() const
+{
+	return m_status;
+}
+
 uint8_t bdpi_portGetStatus(uint64_t portPtr)
 {
 	BDPIPort* p = reinterpret_cast<BDPIPort*>(portPtr);
@@ -42,7 +47,7 @@ void bdpi_portGetReadData(uint32_t* ret,uint64_t portPtr)
 	p->readData(ret);
 }
 
-void bdpi_portPutWriteData(uint64_t portPtr,uint32_t* data)
+void bdpi_portPutWriteData(uint64_t portPtr,const uint32_t* data)
 {
 	BDPIPort* p = reinterpret_cast<BDPIPort*>(portPtr);
 	p->writeData(data);
@@ -53,10 +58,3 @@ void bdpi_portClose(uint64_t portPtr)
 	BDPIPort* p = reinterpret_cast<BDPIPort*>(portPtr);
 	p->close();
 }
-
-//void bdpi_doReadWrite(uint32_t* ret,uint64_t portPtr,const uint32_t* data)
-//{
-//	BDPIPort* p = reinterpret_cast<BDPIPort*>(portPtr);
-//	p->readWrite(ret,data);
-//}
-

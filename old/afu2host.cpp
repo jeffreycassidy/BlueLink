@@ -8,16 +8,12 @@
 #include <boost/range/algorithm.hpp>
 #include <boost/range/adaptor/indexed.hpp>
 
-
-#ifdef HAVE_BOOST_ALIGN
+#include <boost/align/aligned_allocator.hpp>
 #include <boost/align/is_aligned.hpp>
-#endif
-
-#include <BlueLink/Host/aligned_allocator.hpp>
-
 
 #include <BlueLink/Host/AFU.hpp>
 #include <BlueLink/Host/WED.hpp>
+#include <BlueLink/Host/aligned_allocator.hpp>
 
 #include <iomanip>
 #include <vector>
@@ -52,8 +48,9 @@ int main (int argc, char *argv[])
 	cout << "Running with N=" << N << endl;
 
 	// set up the receive buffer
-	std::vector<uint32_t,aligned_allocator<uint32_t,128>> received(3*N,0);
-
+	std::vector<
+		uint32_t,
+		boost::alignment::aligned_allocator<uint32_t,128>> received(3*N,0);
 
 	// set up WED and attach AFU
 	StackWED<StreamWED,128> wed;
@@ -62,13 +59,11 @@ int main (int argc, char *argv[])
 	wed->src=received.data()+N;
 	wed->size=N*sizeof(uint32_t);
 
-#ifdef HAVE_BOOST_ALIGN
 	assert(boost::alignment::is_aligned(CACHELINE_BYTES,received.data()));
 	assert(boost::alignment::is_aligned(CACHELINE_BYTES,wed->src));
-#endif
 
 
-	AFU afu(string("/dev/cxl/afu0.0d"));
+	AFU afu(string(CAPI_AFU_DEVICE_STRING));
 
 	afu.start(wed);
 

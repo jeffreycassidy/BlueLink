@@ -29,6 +29,7 @@ public:
 	BDPIDevice();
 	virtual ~BDPIDevice();
 
+
 	////// Functions for BDPI use
 	void tick(uint64_t timebase);
 	void close();
@@ -42,15 +43,23 @@ public:
 	uint64_t 	timebase() const;
 
 private:
-	virtual void preTick()		{}
-	virtual void postTick()		{}
 
-	virtual void preClose()		{}
-	virtual void postClose()	{}
+	/// cycleStart happens right after the clock tick (just after timebase is updated, before all method calls)
+	/// It should ensure that all port status bits are ready to read
+	virtual void cycleStart()	{}
+
+	/// cycleFinish happens just before the next clock tick (after all method calls)
+	/// It should take care of any cleanup or committing of results
+	virtual void cycleFinish()	{}
+
+	virtual void preClose()		{}		///< Called before invoking close on all ports
+	virtual void postClose()	{}		///< Called after invoking close on all ports
 
 	uint64_t				m_timebase=0;
 	std::vector<BDPIPort*>	m_ports;
 };
+
+
 
 extern "C"
 {

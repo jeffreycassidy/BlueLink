@@ -14,10 +14,7 @@
 #include <boost/range.hpp>
 
 #include <boost/range/algorithm.hpp>
-#if BOOST_VERSION >= 105600
-#define HAVE_BOOST_ALIGN
 #include <boost/align/is_aligned.hpp>
-#endif
 
 /** Simplest possible WED container, just an opaque non-copyable wrapper around a void*.
  *
@@ -35,9 +32,7 @@ public:
 protected:
     explicit WED(unsigned char* p) : p_(p)
     {
-#ifdef HAVE_BOOST_ALIGN
-	assert(boost::align::is_aligned(128,p_);
-#endif
+    	assert(boost::alignment::is_aligned(128,p_));
     }
 
 private:
@@ -48,7 +43,7 @@ private:
 /** A more sophisticated WED container, knowing the contained type, size, and alignment and providing the dereference operators.
  */
 
-template<class T,std::size_t Nb=128,std::size_t Na=Nb>class WEDBase : public WED
+template<class T,std::size_t Nb=128,std::size_t Align=Nb>class WEDBase : public WED
 {
 public:
     typedef T type;
@@ -76,7 +71,7 @@ public:
 
 protected:
     static constexpr std::size_t size_=Nb;
-    static constexpr std::size_t align_=Na;
+    static constexpr std::size_t align_=Align;
 };
 
 template<class T,std::size_t size,std::size_t align=size>class StackWED : public WEDBase<T,size,align>

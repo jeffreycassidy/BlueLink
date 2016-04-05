@@ -10,7 +10,6 @@
 
 BDPIDevice::BDPIDevice()
 {
-	preTick();
 }
 
 BDPIDevice::~BDPIDevice()
@@ -19,9 +18,9 @@ BDPIDevice::~BDPIDevice()
 
 void BDPIDevice::tick(uint64_t t)
 {
-	preTick();
+	cycleFinish();
 	m_timebase=t;
-	postTick();
+	cycleStart();
 }
 
 void BDPIDevice::close()

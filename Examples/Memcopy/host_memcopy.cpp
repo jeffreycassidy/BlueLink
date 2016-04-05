@@ -11,23 +11,19 @@
 
 #include <boost/random/mersenne_twister.hpp>
 
+#include <boost/align/aligned_allocator.hpp>
+
 #include <boost/range.hpp>
 #include <boost/range/algorithm.hpp>
 #include <boost/range/adaptor/indexed.hpp>
 
-
-#include "AFU.hpp"
-#include "WED.hpp"
+#include <BlueLink/Host/AFU.hpp>
+#include <BlueLink/Host/WED.hpp>
 
 #include <iomanip>
+#include <functional>
+#include <fstream>
 #include <vector>
-
-
-#define CACHELINE_BYTES 128
-
-#define AFU_MMIO_REG_SIZE 0x4000000
-#define MMIO_TRACE_ADDR   0x3FFFFF8
-
 
 struct MemcopyWED {
 	uint64_t	addr_from;
@@ -37,100 +33,50 @@ struct MemcopyWED {
 	uint64_t	resv[13];
 };
 
-//cxl_mmio_write64(afu_h,MMIO_TRACE_ADDR,trace_id)
-//cxl_mmio_read64(afu_h,MMIO_TRACE_ADDR)
-//
-//struct alignas(128) wed {
-//	__u64	from;
-//	__u64	to;
-//	__u64	size;
-//};
-//
-//class WED {
-//
-//public:
-//	static WED* New();
-//
-//private:
-//	WED();			// make default constructor invisible
-//};
-//
-//static WED* WED::New()
-//{
-//
-//}
-//
-//class MemcopyWED : public WED
-//{
-//
-//
-//};
-
 using namespace std;
-
-using boost::begin;
-using boost::end;
-
-using boost::adaptors::indexed;
 
 int main (int argc, char *argv[])
 {
 	const size_t Nbytes=1024;
 	const size_t Ndw=Nbytes/8;
-	WED wed;
 
+	// allocate space for input/output/golden
+	vector<
+		uint64_t,
+		boost::alignment::aligned_allocator<uint64_t,128>> golden(Ndw), input(Ndw), output(3*Ndw,0);
+
+	assert(boost::alignment::is_aligned(golden.data(),128ULL));
+	assert(boost::alignment::is_aligned(input.data(),128ULL));
+	assert(boost::alignment::is_aligned(output.data(),128ULL));
+
+
+	// generate stimulus
 	boost::random::mt19937_64 rng;
 
-	//vector<uint64_t> golden(Nbytes/8,0),idata(Nbytes/8,0),odata(Nbytes/8,0);
+	boost::generate(golden, std::ref(rng));
+	boost::copy(golden, input.begin());
 
-	uint64_t *golden,*idata,*odata;
-
-	int ret = posix_memalign((void**)&golden,128,6*Nbytes);
-	assert(!ret);
-
-	idata=golden+2*Nbytes/8;
-	odata=golden+4*Nbytes/8;
-
-	for(size_t i=0; i<6*Ndw; ++i)
-		golden[i]=0;
-
-	generate(golden, golden+Ndw, rng);
-
-	copy(golden, golden+Ndw, idata);
-
-	for(size_t i = 0; i<Ndw; ++i)
-	{
-		if (i % 4 == 0)
-			cout << endl << setw(4) << hex << (i<<3);
-		cout << "  " << right << setw(16) << hex << idata[i];
-	}
-	cout << endl;
-
-#ifdef HARDWARE
-	AFU afu(string("/dev/cxl/afu0.0d"));
-#else
-	AFU afu(string("/dev/cxl/afu0.0"));
-#endif
+	ofstream os("golden.hex");
+	for(const auto w : golden)
+		os << setw(16) << hex << w << endl;
+	os.close();
 
 
 	MemcopyWED* w = static_cast<MemcopyWED*>(wed.get());
 
-	w->addr_from=(uint64_t)idata;
-	w->addr_to=(uint64_t)odata;
+	w->addr_from=(uint64_t)input.data();
+	w->addr_to=(uint64_t)output.data()+Ndw;
 	w->size=Nbytes;
 
 	cout << "From: " << hex << setw(16) << w->addr_from << endl;
 	cout << "  To: " << hex << setw(16) << w->addr_to << endl;
 	cout << "Size: " << hex << setw(16) << w->size << endl;
 
-	afu.start(wed);
+	afu.start(wed.get());
 
 	cout << "AFU started, waiting 200ms for finish" << endl;
 
 	usleep(200000);
-
-	//afu.await_event();
-	cout << "  done" << endl;
 	
 	afu.await_event(1000);
 
@@ -144,43 +90,28 @@ int main (int argc, char *argv[])
 	afu.await_event(1000);
 	cout << "  copy finished" << endl;
 
+
+	for(size_t i=0;i<Ndw;++i)
+		if (golden[i] != input[i])
+			cerr << "Corrupted input data at " << setw(16) << hex << i << endl;
+
+	size_t i;
+
+	for(i=0; i<Ndw; ++i)
+		if (output[i] != 0)
+			cerr << "Corrupted output data at output offset " << setw(16) << hex << endl;
+
+	for(;i<2*Ndw;++i)
+		if (output[i-Ndw] != golden[i])
+			cerr << "Mismatch at " << setw(16) << hex << i-Ndx << " expecting " << setw(16) << golden[i] << " got " << setw(16) << output[i-Ndw] << endl;
+
+	for(;i<3*Ndw;++i)
+		if (output[i] != 0)
+			cerr << "Corrupted output data at output offset " << setw(16) << hex << endl;
+
+	os.open("output.hex");
 	for(size_t i=Ndw; i<2*Ndw; ++i)
-		if (golden[i] != 0)
-			cerr << "Corruption write at " << i << endl;
+		os << setw(16) << hex << output[i] << endl;
 
-	for(size_t i=3*Ndw; i<4*Ndw; ++i)
-			if (golden[i] != 0)
-				cerr << "Corruption write at " << i << endl;
-
-	for(size_t i=5*Ndw; i<6*Ndw; ++i)
-			if (golden[i] != 0)
-				cerr << "Corruption write at " << i << endl;
-
-	for(size_t i=0; i<Ndw; i += 4)
-	{
-		bool match=true;
-		for(size_t j=i; j<i+4; ++j)
-			match &= golden[j]==odata[j];
-
-		cout << setw(4) << hex << i << ": ";
-
-		if (match)
-		{
-			cout << "      OK";
-			for(size_t j=i; j<i+4; ++j)
-				cout << "  " << setw(16) << setfill('0') << odata[j];
-		}
-		else
-		{
-			cout << "Expected";
-			for (size_t j=i; j<i+4; ++j)
-				cout << "  " << setw(16) << setfill('0') << golden[j];
-			cout << endl << "    Received";
-			for(size_t j=i; j<i+4; ++j)
-				cout << "  " << setw(16) << setfill('0') << odata[j];
-		}
-		cout << endl << endl;
-	}
-
-  return 0;
+	return 0;
 }

@@ -9,34 +9,19 @@
 #define MEMSCANCHAIN_BDPIPORTWRAPPER_HPP_
 
 #include "BDPIPort.hpp"
-//
-//template<class Device,class Return,class Args...>class WrappedPortClass
-//{
-//public:
-//	Return read();
-//	void write(Args...);
-//
-//	void close();
-//
-//private:
-//	Device* m_parent=nullptr;
-//};
 
-template<class Derived,class Device,class Return,class Args...>class BDPIPortWrapper : public BDPIPort
+template<class Wrapped,class Device,class Return,class Args...>class BDPIPortWrapper : public BDPIPort
 {
 public:
-//	void		device(Device* d)			{ m_device=d; 		}
-//	Device*		device() 			const 	{ return m_device; 	}
 
 private:
 	virtual void implementWriteData(const uint32_t* data) override;
 	virtual void implementReadData(uint32_t* ret) override;
 	virtual void implementClose() override;
 
-	//Device*		m_device=nullptr;
+	Device*		m_device=nullptr;
 
-	/// The item being wrapped
-	Derived		m_derived;
+	Wrapped		m_wrapped;
 };
 
 template<class Derived,class Device,class Return,class Args...>void BDPIPortWrapper<Derived,Device,Return,Args...>::

@@ -36,8 +36,8 @@ public:
 
     ~aligned_allocator(){}
 
-    pointer 		address(reference x) const { return &x; }
-    const_pointer 	address(const_reference x) const { return &x; }
+    pointer 		address(reference x) 		const { return &x; }
+    const_pointer 	address(const_reference x) 	const { return &x; }
 
     pointer allocate(size_type n,std::allocator<void>::const_pointer hint=nullptr)
     {
@@ -46,22 +46,16 @@ public:
 
         if (st != 0)
             throw std::bad_alloc();
-            //"posix_memalign returned nonzero value");
 
         if (!p)
             throw std::bad_alloc();
-            //"posix_memalign return a null pointer");
 
         assert(reinterpret_cast<std::size_t>(p) % align == 0);
-
-        //cout << "Allocated new aligned memory size " << n << " align " << align << " @" << p << endl;
-
         return static_cast<T*>(p);
     }
 
     void deallocate(pointer p,size_type n)
     {
-        //cout << "Freeing aligned allocated memory size " << n << " location @" << (void*)p << endl;
         free(p);
     }
 

@@ -26,8 +26,12 @@ CONFIGURE_FILE(pslse_server.dat.in pslse_server.dat)
 CONFIGURE_FILE(shim_host.dat.in shim_host.dat)
 CONFIGURE_FILE(pslse.parms.in pslse.parms)
 
-ADD_SUBDIRECTORY(Examples)
 
+ADD_SUBDIRECTORY(Core)
+ADD_SUBDIRECTORY(MMIO)
+ADD_SUBDIRECTORY(DedicatedAFU)
 ADD_SUBDIRECTORY(Altera)
+ADD_SUBDIRECTORY(CommandInterface)
 ADD_SUBDIRECTORY(MemScanChain)
 ADD_SUBDIRECTORY(Host)
+ADD_SUBDIRECTORY(Examples)

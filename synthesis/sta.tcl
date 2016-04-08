@@ -32,6 +32,3 @@ report_clocks
 
 puts "Report clock fmax"
 report_clock_fmax_summary 
-
-
-

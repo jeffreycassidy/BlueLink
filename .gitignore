@@ -56,3 +56,5 @@ afu2host
 # Local library dirs
 vsim_bluelink/
 bsvlibs/
+.ptp-sync-folder/
+/.ptp-sync/

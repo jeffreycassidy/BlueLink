@@ -16,7 +16,6 @@
 #include <map>
 
 
-#include <libcxl.h>
 #include <string.h>			// for strerror
 #include <sys/errno.h>
 
@@ -35,7 +34,7 @@ public:
 	AFU(AFU&&);
 
 	AFU();
-	AFU(char* devstr);
+	AFU(const char* devstr);
 	AFU(std::string devstr);
 
 	void open(std::string);

@@ -1,4 +1,4 @@
-package BLProgrammableLUT;
+package ProgrammableLUT;
 
 import Assert::*;
 import StmtFSM::*;
@@ -8,6 +8,7 @@ import HList::*;
 import Vector::*;
 import ConfigReg::*;
 import RevertingVirtualReg::*;
+import ModuleContext::*;
 
 typedef union tagged {
     void BSVBehavioral;
@@ -60,7 +61,6 @@ import "BVI" MLAB_0l = module mkAlteraStratixVMLAB_0l#(Integer depth)(Lookup#(na
     schedule write  C write;
     schedule lookup CF write;
 endmodule
-
 
 module mkZeroLatencyLookup#(opts_t synOpts,Integer depth)(Lookup#(na,t))
     provisos (

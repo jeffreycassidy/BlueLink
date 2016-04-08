@@ -23,7 +23,7 @@
 #include <fstream>
 #include <vector>
 
-#define DEVICE_STRING "/dev/afu0.0d"
+#define DEVICE_STRING "/dev/cxl/afu0.0d"
 
 struct MemcopyWED {
 	uint64_t	addr_from;
@@ -43,7 +43,7 @@ using namespace std;
 int main (int argc, char *argv[])
 {
 	const bool sim = true;
-	const size_t Nbytes=1024;
+	const size_t Nbytes=65536;
 	const size_t Ndw=Nbytes/8;
 
 	// allocate space for input/output/golden

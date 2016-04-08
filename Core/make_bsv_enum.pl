@@ -2,7 +2,7 @@
 #
 # Converts a .enum text file into a BSV enum definition in its own .bsv file
 #
-# make_bsv_enum.pl <fnroot>
+# make_bsv_enum.pl <fnroot> <inputdir> <outputdir>
 #
 # <Verilog base>
 #   <enum_name_0>
@@ -22,29 +22,31 @@
 
 $/ = undef;
 
-if ($#ARGV != 0)
+if ($#ARGV != 2)
 {
     print "Incorrect number of arguments\n";
-    print "Usage: make_bsv_enum.pl <fnroot>\n";
-    print "  Loads from PSL<fnroot>s.enum and writes to PSL<fnroot>s.bsv\n";
+    print "Usage: make_bsv_enum.pl <fnroot> <inputdir> <outputdir>\n";
+    print "  Loads from <fnroot>.enum and writes to <outputroot>.bsv and .h\n";
     print "  NOTE: BSV will take the last value to be the default if unpacking fails, so a default value should be last\n";
     exit -1;
 }
 
 my $root = $ARGV[0];
+my $inputdir = $ARGV[1];
+my $outputdir = $ARGV[2];
 
-open IFH,"<PSL${root}s.enum";
+open IFH,"<${inputdir}/${root}s.enum" or die "Failed to open ${inputdir}/${root}s.enum for reading";
 
-open OFH,">PSL${root}s.bsv";
+open OFH,">${outputdir}/${root}s.bsv";
 
-open OFHC, ">PSL${root}s.h";
+open OFHC, ">${outputdir}/${root}s.h";
 
 my @lines = split(/\n/,<IFH>);
 
 print OFH  "// DO NOT EDIT! Automatically generated file\n";
-print OFH  "// Created by make_bsv_enum.pl from PSL${root}s.enum\n";
+print OFH  "// Created by make_bsv_enum.pl from ${inputdir}/${root}.enum\n";
 print OFH  "//   Original enum file derived from IBM technical specifications (c) IBM, 2014\n\n";
-print OFH  "package PSL${root}s;\n\n";
+print OFH  "package ${root}s;\n\n";
 print OFH  "import FShow::*;\n";
 print OFH  "typedef enum {\n";
 my @values;
@@ -52,7 +54,7 @@ my $i=0;
 
 my ($literalpfx, @lines) = @lines;
 
-$literalpfx =~ m/([0-9]*)'([hb])/ || die "Unrecognized type specifier: expecting NN'(h|b) for hex or binary";
+$literalpfx =~ m/([0-9]*)'([hb])/ || die "Unrecognized type specifier \"$literalpfx\": expecting NN'(h|b) for hex or binary";
 my $bits=$1;
 my $radix=$2;
 
@@ -127,8 +129,6 @@ foreach my $enumval (keys %enumvals){
 }
 print OFHC "\n};";
 
-print OFH "} PSL$root deriving(Bits,Eq,FShow);\nendpackage\n";
+print OFH "} $root deriving(Bits,Eq,FShow);\nendpackage\n";
 print OFH "\n//NOTE: The last entry is the default value; it will be chosen if bit unpacking fails\n";
-
-
 

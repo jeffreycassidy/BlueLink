@@ -1,8 +1,25 @@
-`ifndef DUTMODULETYPE
-//`error "DUTMODULETYPE must be defined as the name of the toplevel to be wrapped"
-`endif
+/** 
+ *
+ *  `define MODULENAME
+ *
+ * Creates a module `MODULENAME_wrapper with ports reversed and reset logic inserted for use in
+ *
+ *
+ * RESET STRATEGY
+ *
+ *      Power-on reset
+ *
+ *      Interception of PSL Reset job command
+ *
+ * 
+ * PORT NUMBERING
+ *      Reverses the direction of bit vectors from [0 : N-1] in the PSL to [N-1 : 0] per Bluespec convention
+ * 
+ */
 
-module afu (
+`define WRAPMODULENAME(name) ``name``_wrapper
+
+module `WRAPMODULENAME(`MODULENAME) (
 	input  [   0:   5]  ha_brad,
 	output ah_cvalid,
 	input  [   0:   7]  ha_brtag,
@@ -101,8 +118,6 @@ module afu (
   wire [   3:   0] ah_brlat_rev;
 
 
-// Insert code here
-
   // power-on reset generation (hold RST_N low for 1 cycle, and delay for 4 cycles when a reset is provided)
   // delay enables register duplication to ease fanout pressures
 
@@ -117,9 +132,11 @@ module afu (
     rstN_delay <= { ~rst_in, rstN_delay[1:3] };
   end
 
+  assign rst_out = rstN_delay[4];
 
-  `DUTMODULETYPE afurev(
-    .RST_N(rstN_delay[4]),
+
+  `MODULENAME afurev(
+    .RST_N(rst_out),
 	.ha_brad(ha_brad_rev),
 	.ah_cvalid(ah_cvalid_i),
 	.ha_brtag(ha_brtag_rev),

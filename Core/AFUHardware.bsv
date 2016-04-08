@@ -46,8 +46,8 @@ interface AFUHardware#(numeric type brlat);
     method Bool     ah_paren;
 endinterface
 
-instance CAPIHardwareWrappable#(AFUHardware#(brlat),AFU#(brlat));
-    module mkCAPIHardwareWrapper#(AFU#(brlat) bsvifc)(AFUHardware#(brlat));
+instance CAPIHardwareWrappable#(AFUHardware#(brlat),AFUWithParity#(brlat));
+    module mkCAPIHardwareWrapper#(AFUWithParity#(brlat) bsvifc)(AFUHardware#(brlat));
         let c <- mkCAPIHardwareWrapper(bsvifc.command);
         let b <- mkCAPIHardwareWrapper(bsvifc.buffer);
         let m <- mkCAPIHardwareWrapper(bsvifc.mmio);
@@ -359,7 +359,7 @@ instance CAPIHardwareWrappable#(AFUHardwareMMIOResponse,ReadOnly#(DataWithParity
             always_ready_wrapper <= bsvifc.parityval.pbit;
         endrule
 
-        method Bit#(64) ah_mmdata = rawBits(bsvifc.data);
+        method Bit#(64) ah_mmdata = bsvifc.data;
         method Bit#(1)  ah_mmdatapar = always_ready_wrapper;
     endmodule
 endinstance

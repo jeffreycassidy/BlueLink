@@ -104,6 +104,10 @@ instance Parity#(data_t,OddParity) provisos (Bits#(data_t,nb));
     function OddParity parity(data_t i) = OddParity { pbit: reduceXnor(pack(i)) };
 endinstance
 
+instance Parity#(Bit#(n),OddParity);
+    function OddParity parity(Bit#(n) i) = OddParity { pbit: reduceXnor(i) };
+endinstance
+
 
 
 

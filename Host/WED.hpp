@@ -16,6 +16,8 @@
 #include <boost/range/algorithm.hpp>
 #include <boost/align/is_aligned.hpp>
 
+#include <boost/align/align.hpp>
+
 /** Simplest possible WED container, just an opaque non-copyable wrapper around a void*.
  *
  */
@@ -23,32 +25,35 @@
 class WED
 {
 public:
-    void* get() const { return reinterpret_cast<void*>(p_); }
+    void* get() const { return reinterpret_cast<void*>(m_p); }
 
     WED(WED&&) = delete;
     WED(const WED&) = delete;
     WED& operator=(const WED&) = delete;
 
 protected:
-    explicit WED(unsigned char* p) : p_(p)
+    explicit WED(void* p) : m_p(p)
     {
-    	assert(boost::alignment::is_aligned(128,p_));
     }
 
+    void set(void* p){ m_p=p; }
+
 private:
-    unsigned char* p_=nullptr;
+    void* m_p=nullptr;
 };
 
 
 /** A more sophisticated WED container, knowing the contained type, size, and alignment and providing the dereference operators.
  */
 
-template<class T,std::size_t Nb=128,std::size_t Align=Nb>class WEDBase : public WED
+template<class T,std::size_t TSize=128,std::size_t TAlign=TSize>class WEDBase : public WED
 {
 public:
     typedef T type;
 
-    BOOST_STATIC_ASSERT_MSG(sizeof(T) == Nb,"Type does not match specified size in WEDBase");
+    BOOST_STATIC_ASSERT_MSG(sizeof(T) == TSize,"Type does not match specified size in WEDBase");
+
+    WEDBase() : WED(nullptr){}
 
     explicit WEDBase(T* p) : WED(reinterpret_cast<unsigned char*>(p))
         {
@@ -62,43 +67,48 @@ public:
     const T* operator->() const { return static_cast<const T*>(get()); }
 
     boost::iterator_range<unsigned char*> bytes()
-        { unsigned char* p = reinterpret_cast<unsigned char*>(get()); return boost::iterator_range<unsigned char*>(p,p+size_); }
+        { unsigned char* p = reinterpret_cast<unsigned char*>(get()); return boost::iterator_range<unsigned char*>(p,p+Size); }
 
     boost::iterator_range<const unsigned char*> bytes() const
-        { const unsigned char *p = reinterpret_cast<unsigned const char*>(get()); return boost::iterator_range<const unsigned char*>(p,p+size_); }
+        { const unsigned char *p = reinterpret_cast<unsigned const char*>(get()); return boost::iterator_range<const unsigned char*>(p,p+Size); }
 
     std::size_t payloadSize() const { return sizeof(T); }
 
 protected:
-    static constexpr std::size_t size_=Nb;
-    static constexpr std::size_t align_=Align;
+    static constexpr std::size_t Size=TSize;
+    static constexpr std::size_t Align=TAlign;
 };
 
-template<class T,std::size_t size,std::size_t align=size>class StackWED : public WEDBase<T,size,align>
+template<class T,std::size_t TSize,std::size_t Align=128>class StackWED : public WEDBase<T,TSize,Align>
 {
 private:
-    static constexpr std::size_t alloc_=size+align;
+    static constexpr std::size_t AllocSize=TSize+Align;
 
 public:
 
-    StackWED() : WEDBase<T,size,align>(reinterpret_cast<T*>(v.begin() + offset())){}
-    ~StackWED(){}
+    BOOST_STATIC_ASSERT(TSize==sizeof(T));
 
-    // get the base of the unaligned storage
-    const void* base() const { return &v[0]; }
+    StackWED()
+		{
+    		std::size_t space=AllocSize;
+    		void* ptr = v.data();
+    		boost::alignment::align(Align,sizeof(T),ptr,space);
 
-    // check how many bytes are allocated in total
-    std::size_t allocated() const { return alloc_; }
+    		assert(ptr);
+    		assert(space>=sizeof(T));
+    		assert(boost::alignment::is_aligned(Align,ptr));
 
-    // get the offset from the base to the start of actual data
-//    std::size_t offset() const
-//        { return reinterpret_cast<const char*>(WED::get())-&v[0]; }
+    		WEDBase<T,sizeof(T),Align>::set(reinterpret_cast<T*>(ptr));
 
-    std::size_t offset() const
-        { return align - (reinterpret_cast<std::size_t>(v.begin()) % align); }
+    		boost::fill(v,0);
+
+		}
+
+    ~StackWED()
+    {}
 
 private:
-    std::array<char,alloc_> v;
+    std::array<uint8_t,AllocSize> v;
 };
 
 

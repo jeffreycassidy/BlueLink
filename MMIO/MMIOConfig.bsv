@@ -152,8 +152,6 @@ endinstance
  * An instance of AFUConfigVector#(config_t,len) specifies then conversion of the config_t input struct to an output register map.
  * It supports both word and dword reads. Writes are a no-op with ACK sent.
  * 
- * This module is unbuffered. The user will likely need to register input and/or output to meet timing.
- * 
  */
 
 module mkMMIOStaticConfig#(config_t cfg)(Server#(MMIORWRequest,MMIOResponse)) provisos (AFUConfigVector#(config_t,len));
@@ -166,9 +164,9 @@ module mkMMIOStaticConfig#(config_t cfg)(Server#(MMIORWRequest,MMIOResponse)) pr
 //            $display($time," INFO: mkMMIOStaticConfig received request ",fshow(req));
 
             MMIOResponse resp = case (req) matches
-                tagged DWordRead { index: .dwi }: tagged DWordData cfgReg[dwi];
-                tagged WordRead  { index: .wi  }: tagged WordData (wi%2==1 ? upper(cfgReg[wi>>1]) : lower(cfgReg[wi>>1]));
-                default: WriteAck;
+                tagged DWordRead { index: .dwi }: cfgReg[dwi];
+                tagged WordRead  { index: .wi  }: replicateWord(wi%2==1 ? upper(cfgReg[wi>>1]) : lower(cfgReg[wi>>1]));
+                default: 64'h0;
             endcase;
 
             // using FIFO with unguarded input so method does not have implicit conditions
@@ -177,12 +175,6 @@ module mkMMIOStaticConfig#(config_t cfg)(Server#(MMIORWRequest,MMIOResponse)) pr
     endinterface
 
     interface Get response = toGet(o);
-//        method ActionValue#(MMIOResponse) get;
-//            o.deq;
-////            $display($time,"INFO: response is ",fshow(o.first));
-//            return o.first;
-//        endmethod
-//    endinterface
 endmodule
 
 endpackage

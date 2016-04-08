@@ -366,26 +366,29 @@ endinstance
 // MMIO Response (note read data should be duplicated high/low)
 
 
-// The Bits#() representation here carries 2 extra bits for the tags; can be dropped with rawBits()
-typedef union tagged {
-    void        WriteAck;
-    Bit#(32)    WordData;
-    Bit#(64)    DWordData;
-} MMIOResponse deriving(Bits,Eq);
+//// The Bits#() representation here carries 2 extra bits for the tags; can be dropped with rawBits()
+//typedef union tagged {
+//    void        WriteAck;
+//    Bit#(32)    WordData;
+//    Bit#(64)    DWordData;
+//} MMIOResponse deriving(Bits,Eq);
+//
+//instance FShow#(MMIOResponse);
+//    function Fmt fshow(MMIOResponse r) = case (r) matches
+//        tagged WriteAck:          fshow("MMIO Write Ack             ");
+//        tagged WordData .w:     $format("MMIO Word  %08X        ",w);
+//        tagged DWordData .dw:   $format("MMIO DWord %016X",dw);
+//    endcase;
+//endinstance
+//
+//function Bit#(64) rawBits(MMIOResponse r) = case (r) matches
+//    tagged DWordData .dw:   dw;
+//    tagged WordData .w:     { w,w };
+//    tagged WriteAck:        64'h0;
+//endcase;
 
-instance FShow#(MMIOResponse);
-    function Fmt fshow(MMIOResponse r) = case (r) matches
-        tagged WriteAck:          fshow("MMIO Write Ack             ");
-        tagged WordData .w:     $format("MMIO Word  %08X        ",w);
-        tagged DWordData .dw:   $format("MMIO DWord %016X",dw);
-    endcase;
-endinstance
-
-function Bit#(64) rawBits(MMIOResponse r) = case (r) matches
-    tagged DWordData .dw:   dw;
-    tagged WordData .w:     { w,w };
-    tagged WriteAck:        64'h0;
-endcase;
+typedef DataWithParity#(Bit#(64),OddParity) MMIOResponseWithParity;
+typedef Bit#(64)                            MMIOResponse;
 
 
 

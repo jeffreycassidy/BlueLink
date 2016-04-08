@@ -22,6 +22,7 @@ import Assert::*;
 
 function Bit#(32) upper(Bit#(64) i) = truncate(pack(i>>32));
 function Bit#(32) lower(Bit#(64) i) = truncate(pack(i));
+function Bit#(64) replicateWord(Bit#(32) i) = { i,i };
 
 typedef union tagged {
     struct { UInt#(24) index; Bit#(64) data; }  DWordWrite;

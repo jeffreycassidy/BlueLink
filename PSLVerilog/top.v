@@ -14,13 +14,21 @@
 // limitations under the License.
 //
 
+/** 
+ *      `define HA_ASSIGNMENT_DELAY     #1
+ *      `define MODULENAME              mkModuleWhatever
+ */
+
 `timescale 1ns / 1ns
 
 `ifndef HA_ASSIGNMENT_DELAY
 `define HA_ASSIGNMENT_DELAY
 `endif
 
-module top (
+`define TOPMODULENAME(name) ``name``_pslse_top
+`define WRAPMODULENAME(name)  ``name``_wrapper
+
+module `TOPMODULENAME(`MODULENAME) (
   output          breakpoint
 );
 
@@ -571,7 +579,7 @@ module top (
 
   // AFU instance
 
-  afu a0 (
+  `WRAPMODULENAME(`MODULENAME) a0 (
     .ah_cvalid(ah_cvalid),
     .ah_ctag(ah_ctag),
     .ah_ctagpar(ah_ctagpar),

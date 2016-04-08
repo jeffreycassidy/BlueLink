@@ -13,8 +13,8 @@ interface Resource;
 endinterface
 
 /**
- *  init        Initial lock state (False = unlocked)
- *  bypass      If true, available schedules after unlock (ie. can free & re-grant in same cycle)
+ *  initialState    Initial lock state (False = unlocked)
+ *  bypass          If true, available schedules after unlock (ie. can free & re-grant in same cycle)
  *
  * Operation sequence: unlock, lock, clear
  */
@@ -22,11 +22,12 @@ endinterface
 module mkResource#(Bool init,Bool bypass)(Resource);
     Reg#(Bool) locked[3] <- mkCReg(3,init);
 
+    // in bypass mode, available means available at end of cycle (1)
     method Bool available = !locked[bypass ? 1 : 0];
 
     method Action unlock;
-        dynamicAssert(locked[0],"Attempting to unlock already-unlocked resource");
-        locked[0] <= False;
+        dynamicAssert(locked[bypass ? 0 : 1],"Attempting to unlock already-unlocked resource");
+        locked[bypass ? 0 : 1] <= False;
     endmethod
 
     // sequences after unlock if bypass, else conflicts
@@ -42,6 +43,31 @@ endmodule
 
 
 
+
+/** Resource manager interface.
+ * Depending on the implementation, unlock may or may not be conflict-free with itself.
+ *
+ * 
+ */
+
+interface ResourceManager#(numeric type ni);
+    // return the lowest-index available element, if any
+    // will schedule after unlock if bypass is true
+    interface Get#(UInt#(ni))   nextAvailable;
+
+    // lock/unlock a specific element (may or may not carry implicit conditions)
+    method Action               lock(UInt#(ni) ri);
+    method Action               unlock(UInt#(ni) ri);
+
+    // returns the status of all elements
+    method List#(Bool)          status;
+
+    method Action               clear;
+endinterface
+
+
+
+
 /** mkResourceManager
  * Provides the facility to acquire and free resources. Each cycle, can get the next available resource. Multiple resources
  * can be freed simultaneously.
@@ -53,17 +79,6 @@ endmodule
  *
  *  ni      Number of bits in the resource tag
  */
-
-
-interface ResourceManager#(numeric type ni);
-    interface Get#(UInt#(ni))   nextAvailable;
-
-    method Action               lock(UInt#(ni) ri);
-    method Action               unlock(UInt#(ni) ri);
-
-    method Action               clear;
-endinterface
-
 
 
 module mkResourceManager#(Integer n,Bool init,Bool bypass)(ResourceManager#(ni));
@@ -92,76 +107,12 @@ module mkResourceManager#(Integer n,Bool init,Bool bypass)(ResourceManager#(ni))
         endmethod
     endinterface
 
+    method List#(Bool) status = List::map(compose( \not , isAvailable), resources);
+
     // clear just sends a clear signal to all resources
     method Action clear;
         let o <- List::mapM(doClear,resources);
     endmethod
 endmodule
-
-import Vector::*;
-import StmtFSM::*;
-
-module mkTB_ResourceManager() provisos (NumAlias#(nt,4));
-
-    // 4 tags, initially unlocked, with bypass
-    ResourceManager#(2) dut <- mkResourceManager(4,False,False);
-
-    let pwReq <- mkPulseWire;
-
-    Vector#(nt,PulseWire) pwClr <- replicateM(mkPulseWire);
-    Vector#(nt,PulseWire) pwClrDone <- replicateM(mkPulseWire);
-
-    Stmt stim = seq
-        pwReq.send;
-        pwReq.send;
-        pwReq.send;
-        pwReq.send;
-        pwReq.send;
-
-        action
-            pwReq.send;
-            pwClr[0].send;
-        endaction
-        pwClr[0].send;
-
-        action
-            pwClr[1].send;
-            pwClr[2].send;
-            pwReq.send;
-        endaction
-            pwReq.send;
-            pwReq.send;
-            pwReq.send;
-
-    endseq;
-
-    mkAutoFSM(stim);
-
-    (* preempts="granted,denied" *)
-
-    rule granted if (pwReq);
-        let t <- dut.nextAvailable.get;
-        $display($time,": Request granted with tag %d",t);
-    endrule
-
-    rule denied if (pwReq);
-        $display($time,": Request denied");
-    endrule
-
-
-    for(Integer i=0;i<valueOf(nt);i=i+1)
-        rule sendClear if (pwClr[i]);
-            $display($time,": Tag %d freed",i);
-            pwClrDone[i].send;
-            dut.unlock(fromInteger(i));
-        endrule
-
-    function Bool read(PulseWire pw) = pw;
-
-    continuousAssert(map(read,pwClr) == map(read,pwClrDone),"Clear request blocked!");
-
-endmodule
-
-
 
 endpackage

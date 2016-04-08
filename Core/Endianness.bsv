@@ -2,6 +2,8 @@ package Endianness;
 
 import Vector::*;
 
+typedef enum { BE, LE } EndianType deriving(Eq,FShow,Bits);
+
 /* Endianness utility functions.
  *
  * For IBM CAPI interface:
@@ -72,77 +74,88 @@ function LittleEndian#(t) packle(t i)
 
 
 
-typedef enum {
-    HostNative,
-    /*
-     * Does not perform an endian swap on the cache line. On LE hosts, cache lines are 1024b LE bit vectors (opposite to Bluespec).
-     * C/C++ struct elements will appear in normal (declaration) order, but multi-byte elements will need to be endian-reversed
-     * when used in Bluespec code.
-     * Items packed into a BDPIBitPacker will appear in reverse order with incorrect endianness.
-     */
-
-    EndianSwap
-    /* 
-     * Performs an endian swap on the entire 1024b cache line.
-     * Typically, this will convert a 1024b LE host cache line into a 1024b BE bit vector suitable for use in Bluespec.
-     * 
-     * Elements in C/C++ structs appear in reverse order, but their multi-byte elements do not need any manipulation before use.
-     * Items packed into a BDPIBitPacker appear in standard left to right order with correct endiannness.
-     * 
-     * NOTE: When packing C/C++ structs, do not forget that padding elements (including implicit padding at end of struct) are 
-     * reversed too, ie. if a struct declares X bytes but has an alignment of Y, there are Y-X bytes of padding implicitly.
-     */
-} EndianPolicy deriving(Eq);
-
-
-
-
-/* SegReg
- *
- * A segmented register, accessible either as a whole (r.entire) or in segments (r.seg[N])
- * Segment addressing is direct, ie. no endian swap and the index corresponds to brad/bwad.
- *
- * Entire-register read/write may implement an endian swap, depending on module arguments.
+/** Concatenates and unpacks a segmented register into a typed variable.
+ * Endian (BE/LE) specifies the vector endianness convention (LE requires reversing segment order)
+ * 
  */
 
-interface SegReg#(type t,numeric type ns,numeric type nbs);
-    interface Vector#(ns,Reg#(Bit#(nbs))) seg;
+function t concatSegReg(Vector#(ns,Reg#(Bit#(nbs))) segs,EndianType endian)
+        provisos(Bits#(t,nb),Mul#(ns,nbs,nb)) =
+    case(endian) matches
+        BE: unpack(pack(readVReg(segs)));
+        LE: unpack(pack(reverse(readVReg(segs))));
+    endcase;
 
-    interface Reg#(t) entire;
-endinterface
+//typedef enum {
+//    HostNative,
+//    /*
+//     * Does not perform an endian swap on the cache line. On LE hosts, cache lines are 1024b LE bit vectors (opposite to Bluespec).
+//     * C/C++ struct elements will appear in normal (declaration) order, but multi-byte elements will need to be endian-reversed
+//     * when used in Bluespec code.
+//     * Items packed into a BDPIBitPacker will appear in reverse order with incorrect endianness.
+//     */
+//
+//    EndianSwap
+//    /* 
+//     * Performs an endian swap on the entire 1024b cache line.
+//     * Typically, this will convert a 1024b LE host cache line into a 1024b BE bit vector suitable for use in Bluespec.
+//     * 
+//     * Elements in C/C++ structs appear in reverse order, but their multi-byte elements do not need any manipulation before use.
+//     * Items packed into a BDPIBitPacker appear in standard left to right order with correct endiannness.
+//     * 
+//     * NOTE: When packing C/C++ structs, do not forget that padding elements (including implicit padding at end of struct) are 
+//     * reversed too, ie. if a struct declares X bytes but has an alignment of Y, there are Y-X bytes of padding implicitly.
+//     */
+//} EndianPolicy deriving(Eq);
 
 
-module mkSegReg#(EndianPolicy endianPolicy,t init)(SegReg#(t,ns,nbs))
-    provisos (
-        Div#(nb,8,nbytes),
-        Mul#(nbytes,8,nb),
-        Div#(nb,nbs,ns),
-        Mul#(ns,nbs,nb),
-        Bits#(t,nb));
 
-    Vector#(ns,Bit#(nbs)) initChunks = reverse(toChunks(pack(init)));
-
-    // seg corresponds to bwad/brad index (increasing bwad/brad -> increasing address)
-    Vector#(ns,Reg#(Bit#(nbs))) r <- genWithM(compose(mkReg,select(initChunks)));
-
-    // need to reverse host (LE) bwad/brad order to get contiguous BSV (BE) bit vector
-    Vector#(ns,Reg#(Bit#(nbs))) rRev  = reverse(r);
-
-    interface Vector seg = r;
-
-    interface Reg entire;
-        method Action _write(t i) = writeVReg(rRev,toChunks(
-            case (endianPolicy) matches
-                HostNative:     pack(i);
-                EndianSwap:     endianSwap(pack(i));
-            endcase));
-
-        method t _read = unpack(
-            case (endianPolicy) matches
-                HostNative:     pack(readVReg(rRev));
-                EndianSwap:     endianSwap(pack(readVReg(rRev)));
-            endcase);
-    endinterface
-endmodule
+///* SegReg
+// *
+// * A segmented register, accessible either as a whole (r.entire) or in segments (r.seg[N])
+// * Segment addressing is direct, ie. no endian swap and the index corresponds to brad/bwad.
+// *
+// * Entire-register read/write may implement an endian swap, depending on module arguments.
+// */
+//
+//interface SegReg#(type t,numeric type ns,numeric type nbs);
+//    interface Vector#(ns,Reg#(Bit#(nbs))) seg;
+//
+//    interface Reg#(t) entire;
+//endinterface
+//
+//
+//module mkSegReg#(EndianPolicy endianPolicy,t init)(SegReg#(t,ns,nbs))
+//    provisos (
+//        Div#(nb,8,nbytes),
+//        Mul#(nbytes,8,nb),
+//        Div#(nb,nbs,ns),
+//        Mul#(ns,nbs,nb),
+//        Bits#(t,nb));
+//
+//    Vector#(ns,Bit#(nbs)) initChunks = reverse(toChunks(pack(init)));
+//
+//    // seg corresponds to bwad/brad index (increasing bwad/brad -> increasing address)
+//    Vector#(ns,Reg#(Bit#(nbs))) r <- genWithM(compose(mkReg,select(initChunks)));
+//
+//    // need to reverse host (LE) bwad/brad order to get contiguous BSV (BE) bit vector
+//    Vector#(ns,Reg#(Bit#(nbs))) rRev  = reverse(r);
+//
+//    interface Vector seg = r;
+//
+//    interface Reg entire;
+//        method Action _write(t i) = writeVReg(rRev,toChunks(
+//            case (endianPolicy) matches
+//                HostNative:     pack(i);
+//                EndianSwap:     endianSwap(pack(i));
+//            endcase));
+//
+//        method t _read = unpack(
+//            case (endianPolicy) matches
+//                HostNative:     pack(readVReg(rRev));
+//                EndianSwap:     endianSwap(pack(readVReg(rRev)));
+//            endcase);
+//    endinterface
+//endmodule
 
 endpackage

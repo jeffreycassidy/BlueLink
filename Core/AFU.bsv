@@ -10,19 +10,31 @@ import ClientServerU::*;
  * Client module can provide this and connect to the PSL, but other interfaces offer more functionality
  */
 
-interface AFU#(numeric type brlat);
-    interface ClientU#(CacheCommandWithParity,CacheResponseWithParity)                  command;
-    interface AFUBufferInterfaceWithParity#(brlat)                                      buffer;
+interface AFUWithParity#(numeric type brlat);
+    interface ClientU#(CacheCommandWithParity,CacheResponseWithParity)      command;
+    interface AFUBufferInterfaceWithParity#(brlat)                          buffer;
 
-    interface ServerARU#(MMIOCommandWithParity,DataWithParity#(MMIOResponse,OddParity)) mmio;
+    interface ServerARU#(MMIOCommandWithParity,MMIOResponseWithParity)      mmio;
 
     (* always_ready *)
-    interface Put#(JobControlWithParity)                                                control;
+    interface Put#(JobControlWithParity)                                    control;
 
-    interface AFUStatus                                                                 status;
+    interface AFUStatus                                                     status;
 
     (* always_enabled *)
-    method Bool                                                                         paren;
+    method Bool                                                             paren;
+endinterface
+
+
+interface AFU#(numeric type brlat);
+    interface ClientU#(CacheCommand,CacheResponse)                          command;
+    interface AFUBufferInterface#(brlat)                                    buffer;
+    interface ServerARU#(MMIOCommand,MMIOResponse)                          mmio;
+    
+    (* always_ready *)
+    interface Put#(JobControl)                                              control;
+
+    interface AFUStatus                                                     status;
 endinterface
 
 

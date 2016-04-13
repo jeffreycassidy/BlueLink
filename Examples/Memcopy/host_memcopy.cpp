@@ -23,7 +23,7 @@
 #include <fstream>
 #include <vector>
 
-#define DEVICE_STRING "/dev/afu0.0d"
+#define DEVICE_STRING "/dev/cxl/afu0.0d"
 
 struct MemcopyWED {
 	uint64_t	addr_from;
@@ -42,8 +42,12 @@ using namespace std;
 
 int main (int argc, char *argv[])
 {
+#ifdef HARDWARE
+	const bool sim = false
+#else
 	const bool sim = true;
-	const size_t Nbytes=1024;
+#endif
+	const size_t Nbytes=65536;
 	const size_t Ndw=Nbytes/8;
 
 	// allocate space for input/output/golden
@@ -81,10 +85,12 @@ int main (int argc, char *argv[])
 
 	afu.start(wed.get());
 
+	unsigned long long st=0;
+
 	unsigned N;
-	for(N=0;N<100 && afu.mmio_read64(0) != STATUS_WAITING;++N)
+	for(N=0;N<100 && (st=afu.mmio_read64(0)) != STATUS_WAITING;++N)
 	{
-		cout << "  Waiting for 'waiting' status" << endl;
+		cout << "  Waiting for 'waiting' status (st=" << st << " looking for " << STATUS_WAITING << ")" << endl;
 		usleep(sim ? 100000 : 100);
 	}
 
@@ -96,8 +102,6 @@ int main (int argc, char *argv[])
 
 	unsigned timeout=1000;
 
-	unsigned st;
-
 	for(N=0;N < timeout && (st=afu.mmio_read64(0)) != STATUS_DONE;++N)	// wait for done status
 	{
 		cout << "  status " << st << endl << flush;
@@ -107,33 +111,50 @@ int main (int argc, char *argv[])
 	if (N == timeout)
 		cout << "ERROR: Timeout waiting for done status" << endl;
 
+	cout << "Terminating" << endl;
 	afu.mmio_write64(0,0x1ULL);
 
 
+	bool ok=true;
 
 	// check for correct copy and no corruption
 	for(size_t i=0;i<Ndw;++i)
 		if (golden[i] != input[i])
+		{
+			ok = false;
 			cerr << "Corrupted input data at " << setw(16) << hex << i << endl;
+		}
 
 	size_t i;
 
 	for(i=0; i<Ndw; ++i)
 		if (output[i] != 0)
+		{
+			ok = false;
 			cerr << "Corrupted output data at output offset " << setw(16) << i << hex << endl;
+		}
 
 	for(;i<2*Ndw;++i)
 		if (output[i] != golden[i-Ndw])
+		{
+			ok = false;
 			cerr << "Mismatch at " << setw(16) << hex << i-Ndw << " expecting " << setw(16) << golden[i-Ndw] << " got " << setw(16) << output[i] << endl;
+		}
 
 	for(;i<3*Ndw;++i)
 		if (output[i] != 0)
+		{
+			ok = false;
 			cerr << "Corrupted output data at output offset " << setw(16) << hex << i << endl;
+		}
 
 	// write output data to file
 	os.open("output.hex");
 	for(size_t i=Ndw; i<2*Ndw; ++i)
 		os << setw(16) << hex << output[i] << endl;
 
-	return 0;
+	if (ok)
+		cout << "Checks passed!" << endl;
+
+	return ok ? 0 : -1;
 }

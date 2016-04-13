@@ -232,7 +232,7 @@ module mkDedicatedAFU#(DedicatedAFU#(brlat) afu)(AFU#(brlat));
                 case (st) matches
                     tagged ReadWED .*:                  // intercept buffer writes during WED read
                         afu.wedwrite(bw.bwad,bw.bwdata);
-                    Running:                            // pass through when running
+                    Running:                            // pass through when running (downstream should be always_ready)
                         afu.buffer.readdata.put(bw);                            
                     default:                            // should not receive requests here
                         $display($time," ERROR: DedicatedAFU received buffer write while in status ",fshow(st));

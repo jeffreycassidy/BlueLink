@@ -61,7 +61,21 @@ typedef struct { UInt#(64) addr; } EAddress64   deriving(Eq,Bits,Arith,Literal,O
 typedef EAddress64 Offset64;
 typedef EAddress64 Size64;
 
-function Bool aligned(Integer nbytes, EAddress64 addr) = addr % fromInteger(nbytes) == 0;
+typedef UInt#(n)  CacheLineCount#(type n);
+typedef UInt#(7)  CacheLineByteOffset;
+typedef UInt#(57) CacheLineAddress;         // EAddress64 >> 7
+
+typedef 1 NBTransferChunkOffset;
+Integer nChunksPerTransfer=2;
+
+function CacheLineCount#(m) toCacheLineCount(UInt#(n) a) provisos (Add#(7,m,t),Add#(t,__some,64),Add#(m,__more,n)) = truncate(a>>7);
+function CacheLineAddress   toCacheLineAddress(EAddress64 a) = truncate(a.addr>>7);
+
+function EAddress64         toEffectiveAddress(CacheLineAddress c) = EAddress64 { addr: extend(c)<<7 };
+
+function Bool aligned(EAddress64 addr) = alignedToBytes(128,addr);
+function Bool alignedToBytes(Integer nbytes, EAddress64 addr) = addr % fromInteger(nbytes) == 0;
+
 
 instance SizedLiteral#(EAddress64,64);
     function EAddress64 fromSizedInteger(Bit#(64) b) = EAddress64 { addr: unpack(b) };

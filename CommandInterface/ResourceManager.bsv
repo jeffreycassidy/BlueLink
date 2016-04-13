@@ -16,7 +16,11 @@ endinterface
  *  initialState    Initial lock state (False = unlocked)
  *  bypass          If true, available schedules after unlock (ie. can free & re-grant in same cycle)
  *
- * Operation sequence: unlock, lock, clear
+ *
+ * Schedule order
+ *
+ *  Bypass==True    unlock, available, lock, clear
+ *  Bypass==False   available, lock, unlock, clear
  */
 
 module mkResource#(Bool init,Bool bypass)(Resource);
@@ -30,7 +34,6 @@ module mkResource#(Bool init,Bool bypass)(Resource);
         locked[bypass ? 0 : 1] <= False;
     endmethod
 
-    // sequences after unlock if bypass, else conflicts
     method Action lock;
         dynamicAssert(!locked[bypass ? 1 : 0],"Attempting to lock already-locked resource");
         locked[bypass ? 1 : 0] <= True;
@@ -52,7 +55,6 @@ endmodule
 
 interface ResourceManager#(numeric type ni);
     // return the lowest-index available element, if any
-    // will schedule after unlock if bypass is true
     interface Get#(UInt#(ni))   nextAvailable;
 
     // lock/unlock a specific element (may or may not carry implicit conditions)
@@ -62,6 +64,7 @@ interface ResourceManager#(numeric type ni);
     // returns the status of all elements
     method List#(Bool)          status;
 
+    // clear everything to its initial state
     method Action               clear;
 endinterface
 

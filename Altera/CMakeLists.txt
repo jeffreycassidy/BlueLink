@@ -1,7 +1,7 @@
 IF(Bluespec_FOUND)
-    ADD_BSV_PACKAGE(AlteraM20k)
+    #ADD_BSV_PACKAGE(AlteraM20k)
     ADD_BSV_PACKAGE(ProgrammableLUT)
-    ADD_DEPENDENCIES(AlteraM20k BRAMStall)
+    #ADD_DEPENDENCIES(AlteraM20k BRAMStall)
 ENDIF()
 
 ADD_CUSTOM_TARGET(Altera DEPENDS AlteraM20k ProgrammableLUT)

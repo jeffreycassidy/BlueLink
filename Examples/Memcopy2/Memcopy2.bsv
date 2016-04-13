@@ -6,6 +6,8 @@ import Reserved::*;
 import DedicatedAFU::*;
 import AFUHardware::*;
 import AFUShims::*;
+import ConfigReg::*;
+import Cntrs::*;
 
 import ResourceManager::*;
 import DReg::*;
@@ -38,21 +40,23 @@ typedef struct {
     Reserved#(832)  resv;
 } WED deriving(Bits);
 
-typedef enum { Resetting, Ready, Running, Done } Status deriving (Eq,FShow,Bits);
+typedef enum { Resetting, Ready, Waiting, Running, Done } Status deriving (Eq,FShow,Bits);
 
 typedef 64 NTags;
 
+
 module mkAFU_Memcopy2(DedicatedAFU#(2));
     //// WED reg
-    Vector#(2,Reg#(Bit#(512))) wedSegs <- replicateM(mkReg(0));
+    Vector#(2,Reg#(Bit#(512))) wedSegs <- replicateM(mkConfigReg(0));
     WED wed = concatSegReg(wedSegs,LE);
 
-    Reg#(EAddress64) addrFrom <- mkReg(0);
-    Reg#(EAddress64) addrTo <- mkReg(0);
-    Reg#(UInt#(NTags))  sizeRemain <- mkReg(0);
+    Count#(CacheLineAddress)    addrFrom <- mkCount(0);
+    Count#(CacheLineAddress)    addrTo <- mkCount(0);
+    Count#(CacheLineCount#(32)) clRemain <- mkCount(0);
 
     // Internal status
-    let pwStart <- mkPulseWireOR;
+    let pwWEDReady <- mkPulseWire;
+    let pwStart <- mkPulseWire;
     let pwTerm  <- mkPulseWire;
     Reg#(Status) st <- mkReg(Resetting);
 
@@ -68,8 +72,8 @@ module mkAFU_Memcopy2(DedicatedAFU#(2));
     Vector#(NTags,Reg#(Bool)) tagReadComplete <- replicateM(mkConfigReg(False));
 
     // Storage
-    Lookup#(8,EAddress64) addrLUT   <- mkZeroLatencyLookup(hCons(AlteraStratixV,hNil),valueOf(NTags));
-    Lookup#(8,Bit#(512))  txbuf     <- mkZeroLatencyLookup(hCons(AlteraStratixV,hNil),valueOf(NTags)*2);
+    Lookup#(8,CacheLineAddress) addrLUT   <- mkZeroLatencyLookup(hCons(AlteraStratixV,hNil),valueOf(NTags));
+    Lookup#(8,Bit#(512))        txbuf     <- mkZeroLatencyLookup(hCons(AlteraStratixV,hNil),valueOf(NTags)*2);
 
     // Command/response buffers
     Wire#(CacheResponse)    iRespW <- mkWire;
@@ -96,22 +100,27 @@ module mkAFU_Memcopy2(DedicatedAFU#(2));
         st <= Ready;
 
         // wait for start pulse
-        await(pwStart);
         action
+            await(pwWEDReady);
             $display($time," INFO: AFU Master FSM starting");
             $display($time,"      Src address: %016X",unpackle(wed.addrFrom).addr);
             $display($time,"      Dst address: %016X",unpackle(wed.addrTo).addr);
             $display($time,"      Size:        %016X",unpackle(wed.size));
 
-            sizeRemain <= unpackle(wed.size);
-            addrFrom <= unpackle(wed.addrFrom);
-            addrTo <= unpackle(wed.addrTo);
+            clRemain    <= toCacheLineCount(unpackle(wed.size));
+            addrFrom    <= toCacheLineAddress(unpackle(wed.addrFrom));
+            addrTo      <= toCacheLineAddress(unpackle(wed.addrTo));
+            st <= Waiting;
+        endaction
+
+        action
+            await(pwStart);
             st <= Running;
         endaction
 
         // wait until last read is issued
         action
-            await(sizeRemain == 0);
+            await(clRemain == 0);
             $display($time," INFO: Last read has been issued");
         endaction
 
@@ -119,17 +128,17 @@ module mkAFU_Memcopy2(DedicatedAFU#(2));
         repeat(2) noAction;
 
         // wait until last write completes
-        while(((List:: \or )(tagMgr.status)) || !Vector:: \and (readVReg(tagReadComplete)))
-        action
-            $write("Tag status (L=locked):   ");
-            for(Integer i=0;i<64;i=i+1)
-                $write(tagMgr.status[i] ? "L" : ".");
-            $display;
-            $write("Tag read unfinished (U): ");
-            for(Integer i=0;i<64;i=i+1)
-                $write(tagReadComplete[i] ? "." : "U");
-            $display;
-        endaction
+//        while(((List:: \or )(tagMgr.status)) || !Vector:: \and (readVReg(tagReadComplete)))
+//        action
+//            $write("Tag status (L=locked):   ");
+//            for(Integer i=0;i<64;i=i+1)
+//                $write(tagMgr.status[i] ? "L" : ".");
+//            $display;
+//            $write("Tag read unfinished (U): ");
+//            for(Integer i=0;i<64;i=i+1)
+//                $write(tagReadComplete[i] ? "." : "U");
+//            $display;
+//        endaction
 
         action
             await(done);
@@ -163,7 +172,7 @@ module mkAFU_Memcopy2(DedicatedAFU#(2));
         let addr <- addrLUT.lookup(tag);
 
         // send write command, mark read as completed
-        oCmd.enq(CacheCommand { ctag: tag, com: Write_mi, cabt: Strict, cea: addr, cch: 0, csize: 128 });
+        oCmd.enq(CacheCommand { ctag: tag, com: Write_mi, cabt: Strict, cea: toEffectiveAddress(addr), cch: 0, csize: 128 });
         tagReadComplete[tag] <= True;
 
         $display($time," INFO: Read  completed for tag %02X, issuing write ",iResp.first.rtag);
@@ -188,23 +197,23 @@ module mkAFU_Memcopy2(DedicatedAFU#(2));
         tagMgr.unlock(iResp.first.rtag);
     endrule
 
-    rule readWhileNotFinished if (sizeRemain != 0);
+    rule readWhileNotFinished if (clRemain != 0 && st == Running);
         // get tag if available (implicit condition)
         let tag <- tagMgr.nextAvailable.get;
 
         $display($time," INFO: Issuing read with tag %02X",tag);
 
         // issue command
-        oCmd.enq(CacheCommand { ctag: tag, com: Read_cl_na, cabt: Strict, cea: addrFrom, cch: 0, csize: 128 });
+        oCmd.enq(CacheCommand { ctag: tag, com: Read_cl_na, cabt: Strict, cea: toEffectiveAddress(addrFrom), cch: 0, csize: 128 });
 
         // store write address for later use, mark as read incomplete
         addrLUT.write(tag,addrTo);
         tagReadComplete[tag] <= False;
 
         // bump pointers
-        addrFrom    <= addrFrom+128;
-        addrTo      <= addrTo+128;
-        sizeRemain  <= sizeRemain-128;
+        addrFrom.incr(1);
+        addrTo.incr(1);
+        clRemain.decr(1);
     endrule
 
     rule droppedResponse;
@@ -278,7 +287,8 @@ module mkAFU_Memcopy2(DedicatedAFU#(2));
                         mmResp.enq(case(i) matches
                             0:  case (st) matches
                                     Resetting: 0;
-                                    Ready: 2;       // ready here has same meaning as 'waiting' in original Memcopy
+                                    Ready: 1;
+                                    Waiting: 2;
                                     Running: 3;
                                     Done: 4;
                                 endcase
@@ -300,7 +310,7 @@ module mkAFU_Memcopy2(DedicatedAFU#(2));
     method Action   rst = masterfsm.start;
     method Bool     rdy = (st == Ready);
 
-    method Action start(EAddress64 ea,UInt#(8) croom) = pwStart.send;
+    method Action start(EAddress64 ea,UInt#(8) croom) = pwWEDReady.send;
     method ActionValue#(AFUReturn) retval = actionvalue return ret; endactionvalue;
 
 endmodule

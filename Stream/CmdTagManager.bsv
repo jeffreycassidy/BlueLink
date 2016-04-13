@@ -4,6 +4,7 @@ import PSLTypes::*;
 import Vector::*;
 import FIFO::*;
 import SpecialFIFOs::*;
+import ProgrammableLUT::*;
 
 import HList::*;
 
@@ -48,13 +49,17 @@ function CacheCommand bindCommandToTag(CmdWithoutTag cmd,RequestTag ctag) = Cach
 };
 
 
-// interface presented to downstream clients
-interface CmdTagManagerClientPort;
-    method ActionValue#(RequestTag)                     issue(CmdWithoutTag cmd);
-    method CacheResponse                                response;
+/** User data provided during .issue() is presented back during buffer reads/writes and completions.
+ *
+ */
 
-    interface ClientU#(BufferReadRequest,Bit#(512))     writedata;
-    interface ReadOnly#(BufferWrite)                    readdata;
+// interface presented to downstream clients
+interface CmdTagManagerClientPort#(type userDataT);
+    method ActionValue#(RequestTag)                                     issue(CmdWithoutTag cmd,userDataT ud);
+    method Tuple2#(CacheResponse,userDataT)                             response;
+
+    interface ClientU#(Tuple2#(BufferReadRequest,userDataT),Bit#(512))  writedata;
+    interface ReadOnly#(Tuple2#(BufferWrite,userDataT))                 readdata;
 endinterface
 
 
@@ -67,21 +72,26 @@ endinterface
 
 module mkCmdTagManager#(Integer ntags)(
         Tuple2#(
-            CmdTagManagerUpstream#(brlat),      // upstream AFU-like interface
-            CmdTagManagerClientPort))           // downstream interface presented to client
+            CmdTagManagerUpstream#(brlat),          // upstream AFU-like interface
+            CmdTagManagerClientPort#(userDataT)))   // downstream interface presented to client
     provisos (
         NumAlias#(nbtag,8),
+        Bits#(userDataT,nbu),
         Bits#(RequestTag,nbtag));
 
     // tag manager keeps track of which tags are available
     // Bypass = True (same-tag unlock->lock in single cycle) causes big problems meeting timing
     ResourceManager#(nbtag) tagMgr <- mkResourceManager(ntags,False,False);
 
+    // client data LUT: hold data provided when command is issued and send back to client with buffer reads
+    let syn = hCons(AlteraStratixV,hNil);
+    MultiReadLookup#(nbtag,userDataT) userDataLUT <- mkMultiReadZeroLatencyLookup(syn,3,ntags);
+
     // passthrough wires
     Wire#(CacheCommand) oCmd <- mkWire;
-    Wire#(CacheResponse) afuResp <- mkWire;
-    Wire#(BufferWrite) bwIn <- mkWire;
-    Wire#(BufferReadRequest) brReq <- mkWire;
+    Wire#(Tuple2#(CacheResponse,userDataT)) afuResp <- mkWire;
+    Wire#(Tuple2#(BufferWrite,userDataT)) bwIn <- mkWire;
+    Wire#(Tuple2#(BufferReadRequest,userDataT)) brReq <- mkWire;
     Wire#(Bit#(512)) brResp <- mkWire;
 
     return tuple2(
@@ -91,7 +101,8 @@ module mkCmdTagManager#(Integer ntags)(
                 method Action put(CacheResponse resp);
                     if (resp.response != Done)
                         $display($time, " ERROR: mkCmdTagManager received fault response ",fshow(resp));
-                    afuResp <= resp;
+                    let ud <- userDataLUT.lookup[2](resp.rtag);
+                    afuResp <= tuple2(resp,ud);
                     tagMgr.unlock(resp.rtag);
                 endmethod
             endinterface
@@ -101,21 +112,33 @@ module mkCmdTagManager#(Integer ntags)(
 
         interface AFUBufferInterface buffer;
             interface ServerAFL writedata;
-                interface Put request = toPut(asIfc(brReq));
+                interface Put request;
+                    method Action put(BufferReadRequest br);
+                        let ud <- userDataLUT.lookup[0](br.brtag);
+                        brReq <= tuple2(br,ud);
+                    endmethod
+                endinterface
+
                 interface ReadOnly response = toReadOnly(brResp);
             endinterface
-            interface Put readdata = toPut(asIfc(bwIn));
+            interface Put readdata;
+                method Action put(BufferWrite bw);
+                    let ud <- userDataLUT.lookup[1](bw.bwtag);
+                    bwIn <= tuple2(bw,ud);
+                endmethod
+            endinterface
         endinterface
     endinterface,
     
     interface CmdTagManagerClientPort;
-        method ActionValue#(RequestTag) issue(CmdWithoutTag cmd);
+        method ActionValue#(RequestTag) issue(CmdWithoutTag cmd,userDataT ud);
             let tag <- tagMgr.nextAvailable.get;
+            userDataLUT.write(tag,ud);
             oCmd <= bindCommandToTag(cmd,tag);
             return tag;
         endmethod
 
-        method CacheResponse response = afuResp;
+        method Tuple2#(CacheResponse,userDataT) response = afuResp;
 
         interface ClientU writedata;
             interface ReadOnly request = toReadOnly(brReq);

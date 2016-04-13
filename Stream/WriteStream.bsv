@@ -12,7 +12,7 @@ import DReg::*;
 
 import Stream::*;
 
-module mkWriteStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort cmdPort)(
+module mkWriteStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(nbu)) cmdPort)(
     Tuple2#(
         StreamCtrl,
         Put#(t)))
@@ -21,6 +21,7 @@ module mkWriteStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort cmdPort
         NumAlias#(nbc,1),       // Bits for chunk counter
         NumAlias#(nbCount,32),  // lots of cache lines
         Bits#(RequestTag,nbtag),
+        Add#(nbs,__some,nbu),
         Bits#(t,512),
         Add#(nbs,nbc,nblut)     // Bits for lut index (slot+chunk)
     );
@@ -40,7 +41,6 @@ module mkWriteStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort cmdPort
     // Buffer & buffer status
     List#(SetReset)                     bufSlotUsed <- List::replicateM(nBuf,mkConflictFreeSetReset(False));
     Lookup#(nblut,t)                    bufData <- mkZeroLatencyLookup(syn,nBuf * 2**valueOf(nbc));
-    MultiReadLookup#(nbtag,UInt#(nbs))  tagSlotMap <- mkMultiReadZeroLatencyLookup(syn,2,nTags);
 
     Bool isEmpty            = issuePtr == writePtr && !bufSlotUsed[writePtr];
     Bool bufSlotAvailable   = !bufSlotUsed[writePtr];
@@ -59,23 +59,24 @@ module mkWriteStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort cmdPort
             $display($time," INFO: Last write issued");
         end
 
-        let tag <- cmdPort.issue(CmdWithoutTag { com: Write_mi, cabt: Strict, csize: 128, cea: toEffectiveAddress(clAddress) });
-        tagSlotMap.write(tag,issuePtr);
+        let tag <- cmdPort.issue(
+            CmdWithoutTag { com: Write_mi, cabt: Strict, csize: 128, cea: toEffectiveAddress(clAddress) },
+            pack(extend(issuePtr)));
 
         $display($time," INFO: Issued write for address %016X",toEffectiveAddress(clAddress));
     endrule
 
-    Reg#(Maybe#(Tuple2#(RequestTag,UInt#(nbc)))) brReqQ <- mkDReg(tagged Invalid);
+    Reg#(Maybe#(UInt#(nblut))) brReqQ <- mkDReg(tagged Invalid);
     Reg#(Maybe#(t)) brDataQ <- mkReg(tagged Invalid);
 
     rule regBufReadRequest;
-        let br = cmdPort.writedata.request;
-        brReqQ <= tagged Valid tuple2(br.brtag, truncate(br.brad));
+        let { br, s } = cmdPort.writedata.request;
+        UInt#(nbs) slot = unpack(truncate(s));
+        brReqQ <= tagged Valid lutIndex(slot,truncate(br.brad));
     endrule
 
-    rule doReadBufDataLookup if (brReqQ matches tagged Valid { .tag, .chunk });
-        let slot <- tagSlotMap.lookup[1](tag);
-        let data <- bufData.lookup(lutIndex(slot,chunk));
+    rule doReadBufDataLookup if (brReqQ matches tagged Valid .i);
+        let data <- bufData.lookup(i);
         brDataQ <= tagged Valid data;
     endrule
 
@@ -84,8 +85,8 @@ module mkWriteStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort cmdPort
     endrule
 
     rule handleResponse;
-        let resp = cmdPort.response;
-        let slot <- tagSlotMap.lookup[0](resp.rtag);
+        let { resp, s } = cmdPort.response;
+        UInt#(nbs) slot = unpack(truncate(s));
 
         if(resp.response != Done)
             $display($time," ERROR: Slot %02X fault response received but not handled ",slot,fshow(resp));

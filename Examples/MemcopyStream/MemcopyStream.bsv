@@ -40,10 +40,10 @@ module mkMemcopyStreamBase(DedicatedAFU#(2));
 
     // Command-tag management
     CmdTagManagerUpstream#(2) pslside;
-    CmdTagManagerClientPort tagmgr;
+    CmdTagManagerClientPort#(Bit#(8)) tagmgr;
 
     { pslside, tagmgr } <- mkCmdTagManager(64);
-    Vector#(2,CmdTagManagerClientPort) client <- mkCmdPriorityArbiter(tagmgr);
+    Vector#(2,CmdTagManagerClientPort#(Bit#(8))) client <- mkCmdPriorityArbiter(tagmgr);
 
     // Stream controllers
     GetS#(Bit#(512)) idata;

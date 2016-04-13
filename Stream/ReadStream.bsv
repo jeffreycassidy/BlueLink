@@ -13,7 +13,7 @@ import DReg::*;
 //function t readCReg(Integer i,Array#(Reg#(t)) r) = r[i]._read;
 //function Action writeCReg(Integer i,t val,Array#(Reg#(t)) r) = r[i]._write(val);
 
-module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort cmdPort)(
+module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(nbu)) cmdPort)(
     Tuple2#(
         StreamCtrl,
         GetS#(t)))
@@ -22,9 +22,12 @@ module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort cmdPort)
         NumAlias#(nbc,1),       // Bits for chunk counter
         NumAlias#(nbCount,32),  // lots of cache lines
         Bits#(RequestTag,nbtag),
+        Add#(nbs,__some,nbu),   // user data tag big enough to accommodate a slot index
         Bits#(t,512),           // TODO: Make proviso more general on transfer type
         Add#(nbs,nbc,nblut)     // Bits for lut index (slot+chunk)
     );
+
+    Bool verbose=True;
 
     let syn = hCons(MemSynthesisStrategy'(AlteraStratixV),hNil);
 
@@ -46,9 +49,8 @@ module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort cmdPort)
     List#(SetReset)                     bufSlotAllocated     <- List::replicateM(nBuf,mkConflictFreeSetReset(False));
 
     //      Complete will be False if a request has been issued and completed
-    List#(SetReset)                     bufSlotComplete      <- List::replicateM(nBuf,mkConflictFreeSetReset(False));
-    Lookup#(nblut,t)                    bufData <- mkZeroLatencyLookup(syn,nBuf * 2**valueOf(nbc));
-    MultiReadLookup#(nbtag,UInt#(nbs))  tagSlotMap <- mkMultiReadZeroLatencyLookup(syn,2,nTags);
+    List#(SetReset)                     bufSlotComplete     <- List::replicateM(nBuf,mkConflictFreeSetReset(False));
+    Lookup#(nblut,t)                    bufData             <- mkZeroLatencyLookup(syn,nBuf * 2**valueOf(nbc));
 
     Bool isFull             = issuePtr == outputPtr && bufSlotAllocated[outputPtr];
     Bool outputAvailable    = bufSlotComplete[outputPtr];
@@ -61,8 +63,9 @@ module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort cmdPort)
         clAddress.incr(1);
         clRemaining.decr(1);
 
-        let tag <- cmdPort.issue(CmdWithoutTag { com: Read_cl_na, cabt: Strict, csize: 128, cea: toEffectiveAddress(clAddress) });
-        tagSlotMap.write(tag,issuePtr);
+        let tag <- cmdPort.issue(
+            CmdWithoutTag { com: Read_cl_na, cabt: Strict, csize: 128, cea: toEffectiveAddress(clAddress) },
+            pack(extend(issuePtr)));
 
         if (clRemaining == 1)
         begin
@@ -84,14 +87,15 @@ module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort cmdPort)
         peek <= val;
     endrule
 
-
-
     rule handleResponse;
-        let resp = cmdPort.response;
-        let slot <- tagSlotMap.lookup[0](resp.rtag);
+        let { resp, s } = cmdPort.response;
+        UInt#(nbs) slot = unpack(truncate(s));
 
         if(resp.response != Done)
             $display($time," ERROR: Slot %02X fault response received but not handled ",slot,fshow(resp));
+
+        if(verbose)
+            $display($time," INFO: Completed read tag %02X (slot %02X)",resp.rtag,slot);
             
         bufSlotComplete[slot].set;
     endrule
@@ -99,17 +103,10 @@ module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort cmdPort)
     Reg#(Maybe#(Tuple2#(UInt#(nblut),t))) bufWriteIn <- mkDReg(tagged Invalid);
 
     rule handleBufWrite;
-        let bw = cmdPort.readdata;
-        let slot <- tagSlotMap.lookup[1](bw.bwtag);
-        bufWriteIn <= tagged Valid tuple2(lutIndex(slot,truncate(bw.bwad)),unpack(bw.bwdata));
-//        bufData.write((extend(slot)<<valueOf(nbc)) | extend(bw.bwad),unpack(bw.bwdata));
+        let { bw, s } = cmdPort.readdata;
+        UInt#(nbs) slot = unpack(truncate(s));
+        bufData.write((extend(slot)<<valueOf(nbc)) | extend(bw.bwad),unpack(bw.bwdata));
     endrule
-
-    rule commitBufWrite if (bufWriteIn matches tagged Valid { .idx, .data} );
-        bufData.write(idx,data);
-    endrule
-
-    function Action write(rt val,Reg#(rt) r) = r._write(val);
 
     return tuple2(
     interface StreamCtrl;

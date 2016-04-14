@@ -81,7 +81,8 @@ module mkCmdTagManager#(Integer ntags)(
 
     // tag manager keeps track of which tags are available
     // Bypass = True (same-tag unlock->lock in single cycle) causes big problems meeting timing
-    ResourceManager#(nbtag) tagMgr <- mkResourceManager(ntags,False,False);
+    //ResourceManager#(nbtag) tagMgr <- mkResourceManager(ntags,False,False);
+    ResourceManagerSF#(UInt#(6)) tagMgr <- mkResourceManagerFIFO(64,True,True);
 
     // client data LUT: hold data provided when command is issued and send back to client with buffer reads
     let syn = hCons(AlteraStratixV,hNil);
@@ -103,7 +104,7 @@ module mkCmdTagManager#(Integer ntags)(
                         $display($time, " ERROR: mkCmdTagManager received fault response ",fshow(resp));
                     let ud <- userDataLUT.lookup[2](resp.rtag);
                     afuResp <= tuple2(resp,ud);
-                    tagMgr.unlock(resp.rtag);
+                    tagMgr.unlock(truncate(resp.rtag));
                 endmethod
             endinterface
 
@@ -132,7 +133,8 @@ module mkCmdTagManager#(Integer ntags)(
     
     interface CmdTagManagerClientPort;
         method ActionValue#(RequestTag) issue(CmdWithoutTag cmd,userDataT ud);
-            let tag <- tagMgr.nextAvailable.get;
+            let tagi <- tagMgr.nextAvailable.get;
+            RequestTag tag = extend(tagi);
             userDataLUT.write(tag,ud);
             oCmd <= bindCommandToTag(cmd,tag);
             return tag;

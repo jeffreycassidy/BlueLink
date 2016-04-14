@@ -73,7 +73,7 @@ module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(nb
             clCommandsDone[0] <= True;
         end
 
-        $display($time," INFO: Issued read for address %016X",toEffectiveAddress(clAddress));
+        $display($time," INFO: Issued read for address %016X using tag %02X",toEffectiveAddress(clAddress),tag);
 
         bufSlotAllocated[issuePtr].set;
         bufSlotComplete[issuePtr].rst;

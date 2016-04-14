@@ -3,6 +3,9 @@ package ResourceManager;
 import GetPut::*;
 import List::*;
 import Assert::*;
+import Cntrs::*;
+import HList::*;
+import ProgrammableLUT::*;
 
 interface Resource;
     method Action   unlock;
@@ -115,6 +118,123 @@ module mkResourceManager#(Integer n,Bool init,Bool bypass)(ResourceManager#(ni))
     // clear just sends a clear signal to all resources
     method Action clear;
         let o <- List::mapM(doClear,resources);
+    endmethod
+endmodule
+
+
+
+
+
+interface ResourceManagerSF#(type resID);
+    method Bool anyFree;
+    method Bool allFree;
+
+    interface Get#(resID) nextAvailable;
+    method Action unlock(resID r);
+
+    method Action clear;
+endinterface
+
+
+module mkResourceManagerFIFO#(Integer n,Bool init,Bool bypass)(ResourceManagerSF#(UInt#(ni)))
+    provisos (
+        Alias#(resID,UInt#(ni)),
+        NumAlias#(ni,6)
+    );
+    Count#(UInt#(ni)) rdPtr <- mkCount(0);
+    Count#(UInt#(ni)) wrPtr <- mkCount(0);
+
+    Reg#(Bool) lastEnq[2] <- mkCReg(2,True);    // initial state -> full (rdPtr == wrPtr && lastEnq)
+    Reg#(Bool) lastDeq[2] <- mkCReg(2,False);
+
+    // full state before any actions fire
+
+    Bool empty = (rdPtr == wrPtr) && lastDeq[0];
+    Bool full = (rdPtr == wrPtr) && lastEnq[0];
+
+    Reg#(Bool) warmup[2] <- mkCReg(2,True);
+
+    Wire#(UInt#(ni)) nextFreeTag <- mkWire;
+
+    let pwGrant <- mkPulseWire, pwNextFromFIFO <- mkPulseWire;
+
+    let syn = hCons(AlteraStratixV,hNil);
+
+    Lookup#(ni,UInt#(ni)) lut <- mkZeroLatencyLookup(syn,n);
+
+    RWire#(UInt#(ni)) unlockTag <- mkRWire;
+
+    
+    // In warmup phase, sequentially grant all tags 0..N-1 so can safely ignore rdPtr/wrPtr
+    // After warmup, need wrPtr != rdPtr
+    rule nextFreeFromFIFO if (!empty);
+        if (!warmup[0])
+        begin
+            let t <- lut.lookup(rdPtr);
+            nextFreeTag <= t;
+        end
+        else
+            nextFreeTag <= rdPtr;
+
+        pwNextFromFIFO.send;
+    endrule
+
+    // If granted from FIFO, then bump the read pointer
+    rule grantFromFIFO if (pwGrant && pwNextFromFIFO);
+        if (rdPtr == fromInteger(n-1))
+            warmup[0] <= False;
+
+        rdPtr.incr(1);
+    endrule
+
+    if (bypass)
+    begin
+        // Bypass: provide the incoming freed tag before any tags from FIFO
+        (* descending_urgency="nextFreeFromBypass,nextFreeFromFIFO" *)
+        rule nextFreeFromBypass if (unlockTag.wget matches tagged Valid .t);
+            nextFreeTag <= t;
+        endrule
+    end
+
+    // enq newly unlocked tag back into FIFO as long as it wasn't consumed by a bypass-grant
+    rule enqUnlockTag if (unlockTag.wget matches tagged Valid .t &&& !(bypass && pwGrant));
+        lut.write(wrPtr,t);
+        wrPtr.incr(1);
+    endrule
+
+    rule updateState;
+        if (pwGrant && !isValid(unlockTag.wget))
+        begin
+            lastDeq[0] <= True;
+            lastEnq[0] <= False;
+        end
+        else if (!pwGrant && isValid(unlockTag.wget))
+        begin
+            lastDeq[0] <= False;
+            lastEnq[0] <= True;
+        end
+    endrule
+
+    method Bool anyFree = !empty;
+    method Bool allFree = full;
+
+    interface Get nextAvailable;
+        method ActionValue#(resID) get;
+            pwGrant.send;
+            return nextFreeTag;             // implicit condition: there exists a free tag
+        endmethod
+    endinterface
+
+    method Action unlock(resID r);
+        unlockTag.wset(r);
+    endmethod
+
+    method Action clear;
+        rdPtr <= 0;
+        wrPtr <= 0;
+        warmup[1] <= True;
+        lastEnq[1] <= True;        // initial state: full
+        lastDeq[1] <= False;
     endmethod
 endmodule
 

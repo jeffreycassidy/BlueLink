@@ -5,4 +5,4 @@ ADD_BSV_PACKAGE(ReadStream Stream ProgrammableLUT)
 ADD_BSV_PACKAGE(WriteStream Stream ProgrammableLUT)
 ADD_BSV_PACKAGE(CmdArbiter CmdTagManager)
 
-ADD_BSV_TESTBENCH(Test_ReadStream)
+#ADD_BSV_TESTBENCH(Test_ReadStream)

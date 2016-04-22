@@ -5,6 +5,7 @@ import Vector::*;
 import FIFO::*;
 import SpecialFIFOs::*;
 import ProgrammableLUT::*;
+import DReg::*;
 
 import HList::*;
 
@@ -70,6 +71,16 @@ interface CmdTagManagerUpstream#(numeric type brlat);
 endinterface
 
 
+
+/** Command tag manager tracks the status of command tags and grants them when available to a single client port.
+ * It also keeps track of user-provided data that goes along with the command and presents that data with any buffer reads/writes
+ * and command responses.
+ *
+ * All paths through the module are combinational (no added latency)
+ * The bit size of the data should be kept small as timing is critical.
+ */
+
+
 module mkCmdTagManager#(Integer ntags)(
         Tuple2#(
             CmdTagManagerUpstream#(brlat),          // upstream AFU-like interface
@@ -79,10 +90,15 @@ module mkCmdTagManager#(Integer ntags)(
         Bits#(userDataT,nbu),
         Bits#(RequestTag,nbtag));
 
+    // OLD-STYLE (uses regs/ALMs to track tag status and allows parallel access to all tag status)
     // tag manager keeps track of which tags are available
     // Bypass = True (same-tag unlock->lock in single cycle) causes big problems meeting timing
     //ResourceManager#(nbtag) tagMgr <- mkResourceManager(ntags,False,False);
-    ResourceManagerSF#(UInt#(6)) tagMgr <- mkResourceManagerFIFO(64,True,True);
+
+    // NEW-STYLE using a FIFO to track only the next available tag (parallel status access is not available)
+    // Disallow bypass, as it introduces a dependency from ha_rvalid through to .issue CAN_FIRE
+    // Alternatively, could register the command response before the module
+    ResourceManagerSF#(UInt#(6)) tagMgr <- mkResourceManagerFIFO(64,False);
 
     // client data LUT: hold data provided when command is issued and send back to client with buffer reads
     let syn = hCons(AlteraStratixV,hNil);
@@ -94,6 +110,12 @@ module mkCmdTagManager#(Integer ntags)(
     Wire#(Tuple2#(BufferWrite,userDataT)) bwIn <- mkWire;
     Wire#(Tuple2#(BufferReadRequest,userDataT)) brReq <- mkWire;
     Wire#(Bit#(512)) brResp <- mkWire;
+
+    // Pipe the user data LUT write 1 clock (PSL won't turn a reply around in <= 1 cycle)
+    Reg#(Maybe#(Tuple2#(RequestTag,userDataT))) userDataLUTWrite <- mkDReg(tagged Invalid);
+    rule writeUserDataLUT if (userDataLUTWrite matches tagged Valid { .tag, .ud });
+        userDataLUT.write(tag,ud);
+    endrule
 
     return tuple2(
     interface CmdTagManagerUpstream;
@@ -135,7 +157,7 @@ module mkCmdTagManager#(Integer ntags)(
         method ActionValue#(RequestTag) issue(CmdWithoutTag cmd,userDataT ud);
             let tagi <- tagMgr.nextAvailable.get;
             RequestTag tag = extend(tagi);
-            userDataLUT.write(tag,ud);
+            userDataLUTWrite <= tagged Valid tuple2(tag,ud);
             oCmd <= bindCommandToTag(cmd,tag);
             return tag;
         endmethod

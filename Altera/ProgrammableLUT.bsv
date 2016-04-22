@@ -62,6 +62,18 @@ import "BVI" MLAB_0l = module mkAlteraStratixVMLAB_0l#(Integer depth)(Lookup#(na
     schedule lookup CF write;
 endmodule
 
+module [ModuleContext#(ctxT)] mkZeroLatencyLookupCtx#(Integer depth)(Lookup#(na,t))
+    provisos (
+        Bits#(t,nd),
+        Gettable#(ctxT,MemSynthesisStrategy));
+
+    ctxT ctx <- getContext;
+    MemSynthesisStrategy syn = getIt(ctx);
+    let _m <- mkZeroLatencyLookup(hCons(syn,hNil),depth);
+    return _m;
+
+endmodule
+
 module mkZeroLatencyLookup#(opts_t synOpts,Integer depth)(Lookup#(na,t))
     provisos (
         Bits#(t,nd),
@@ -139,8 +151,5 @@ module mkMultiReadZeroLatencyLookup#(opts_t opts,Integer nread,Integer depth)(Mu
 
     interface Array lookup = readPort;
 endmodule
-
-// don't export underlying Altera primitives
-//export Lookup, MultiReadLookup, mkZeroLatencyLookup, mkMultiReadZeroLatencyLookup, MemSynthesisStrategy, ReadPort;
 
 endpackage

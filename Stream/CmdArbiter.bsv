@@ -10,6 +10,14 @@ import PSLTypes::*;
 import DReg::*;
 import GetPut::*;
 
+/** Priority arbiter which will always grant to client[i] before client[i+1]. As a result, the issue methods schedule in increasing
+ * order of client index. Commands are not registered by this module.
+ * 
+ * Buffer reads/write and command responses are steered to the appropriate originating client. Since buffer reads are latency-
+ * critical they are not registered. Buffer writes and command responses are, adding an extra cycle of latency.
+ *
+ */
+
 module mkCmdPriorityArbiter#(CmdTagManagerClientPort#(userDataT) tagMgr)(Vector#(nPorts,CmdTagManagerClientPort#(userDataT)))
     provisos (
         Alias#(UInt#(4),clientIndex),
@@ -65,6 +73,13 @@ module mkCmdPriorityArbiter#(CmdTagManagerClientPort#(userDataT) tagMgr)(Vector#
         False,
         clientGrant);
 
+    // allow 1 cycle delay to ease timing into the 3 tagClientMap MLABs
+    Reg#(Maybe#(Tuple2#(RequestTag,clientIndex))) tagClientMapWrite <- mkDReg(tagged Invalid);
+
+    rule writeTagClientMap if (tagClientMapWrite matches tagged Valid { .tag, .cl });
+        tagClientMap.write(tag,cl);
+    endrule
+
 
     for(Integer i=0;i<valueOf(nPorts);i=i+1)
     begin
@@ -72,7 +87,11 @@ module mkCmdPriorityArbiter#(CmdTagManagerClientPort#(userDataT) tagMgr)(Vector#
             method ActionValue#(RequestTag) issue(CmdWithoutTag cmd,userDataT ud) if (!block[i]);
                 pwGrant[i].send;
                 let tag <- tagMgr.issue(cmd,ud);
-                tagClientMap.write(tag,fromInteger(i));
+
+                // delay tagClientMap write by 1 cycle, on the assumption that PSL will not turn around a response in <= 1 cycle
+                tagClientMapWrite <= tagged Valid tuple2(tag,fromInteger(i));
+
+//                tagClientMap.write(tag,fromInteger(i));
                 return tag;
             endmethod
 

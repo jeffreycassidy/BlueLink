@@ -4,7 +4,7 @@ IF(Bluespec_FOUND)
     #ADD_DEPENDENCIES(AlteraM20k BRAMStall)
 ENDIF()
 
-ADD_CUSTOM_TARGET(Altera DEPENDS AlteraM20k ProgrammableLUT)
+ADD_CUSTOM_TARGET(Altera DEPENDS ProgrammableLUT)
 
 
 ## TODO: Need an automated way to rebuild this lib when .v files change

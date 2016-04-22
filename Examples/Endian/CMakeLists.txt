@@ -1,0 +1,3 @@
+ADD_BSV_TESTBENCH(Endian)
+
+ADD_BLUESIM_TESTCASE(Endian PrintEndian)

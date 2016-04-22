@@ -11,7 +11,7 @@ FUNCTION(ADD_ENUM_PACKAGE ENUMPREFIX)
     ADD_GENERATED_BSV_PACKAGE(${ENUMPREFIX}s)
 ENDFUNCTION()
 
-ADD_BSV_PACKAGE(PSLTypes)
+ADD_BSV_PACKAGE(PSLTypes Parity ClientServerU Endianness PSLCommands PSLJobOpcodes PSLControlCommands PSLResponseCodes PSLTranslationOrderings)
 
 FOREACH(PKG PSLTranslationOrdering PSLControlCommand PSLJobOpcode PSLCommand PSLResponseCode)
     MESSAGE("Adding enum package ${PKG}")
@@ -21,17 +21,10 @@ ENDFOREACH()
 
 
 ADD_BSV_PACKAGE(AFU PSLTypes)
-ADD_BSV_PACKAGE(AFUHardware AFU)
+ADD_BSV_PACKAGE(AFUHardware AFU PSLTypes)
 ADD_BSV_PACKAGE(Endianness)
 ADD_BSV_PACKAGE(Parity)
 ADD_BSV_PACKAGE(ClientServerU)
-ADD_BSV_PACKAGE(AFUShims)
-
-ADD_DEPENDENCIES(AFUShims PSLTypes)
-
-ADD_DEPENDENCIES(AFUHardware PSLTypes)
-
-ADD_DEPENDENCIES(PSLTypes Parity ClientServerU Endianness PSLCommands PSLJobOpcodes PSLControlCommands PSLResponseCodes PSLTranslationOrderings)
-ADD_DEPENDENCIES(AFU PSLTypes)
+ADD_BSV_PACKAGE(AFUShims PSLTypes)
 
 ADD_CUSTOM_TARGET(Core ALL DEPENDS PSLTypes AFU AFUHardware Endianness Parity)

@@ -27,6 +27,8 @@ CONFIGURE_FILE(shim_host.dat.in shim_host.dat)
 CONFIGURE_FILE(pslse.parms.in pslse.parms)
 
 
+ADD_BSV_PACKAGE(ShiftReg)
+
 ADD_SUBDIRECTORY(Core)
 ADD_SUBDIRECTORY(MMIO)
 ADD_SUBDIRECTORY(DedicatedAFU)

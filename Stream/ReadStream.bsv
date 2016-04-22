@@ -10,9 +10,6 @@ import HList::*;
 import Assert::*;
 import DReg::*;
 
-//function t readCReg(Integer i,Array#(Reg#(t)) r) = r[i]._read;
-//function Action writeCReg(Integer i,t val,Array#(Reg#(t)) r) = r[i]._write(val);
-
 module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(nbu)) cmdPort)(
     Tuple2#(
         StreamCtrl,

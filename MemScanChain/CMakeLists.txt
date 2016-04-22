@@ -10,10 +10,3 @@ IF(Bluespec_FOUND)
     
     ADD_BLUESIM_TESTCASE(BDPIDeviceTest Ticker10 BDPIDeviceBase BDPITicker)
 ENDIF()
-
-
-## BDPIDevice/BDPIPort C++ libraries
-ADD_LIBRARY(BDPIDeviceBase SHARED BDPIDevice.cpp BDPIPort.cpp BDPIDeviceFactory.cpp BDPIDeviceFactoryRegistry.cpp)
-
-ADD_LIBRARY(BDPITicker SHARED Ticker.cpp)
-TARGET_LINK_LIBRARIES(BDPITicker BDPIDeviceBase)

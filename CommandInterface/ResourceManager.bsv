@@ -136,7 +136,7 @@ interface ResourceManagerSF#(type resID);
 endinterface
 
 
-module mkResourceManagerFIFO#(Integer n,Bool init,Bool bypass)(ResourceManagerSF#(UInt#(ni)))
+module mkResourceManagerFIFO#(Integer n,Bool bypass)(ResourceManagerSF#(UInt#(ni)))
     provisos (
         Alias#(resID,UInt#(ni)),
         NumAlias#(ni,6)

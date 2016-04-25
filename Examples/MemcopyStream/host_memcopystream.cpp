@@ -47,7 +47,8 @@ int main (int argc, char *argv[])
 #else
 	const bool sim = true;
 #endif
-	const size_t Nbytes=65536;
+
+	const size_t Nbytes = argc > 1 ? atoi(argv[1]) : 65536;
 	const size_t Ndw=Nbytes/8;
 
 	// allocate space for input/output/golden

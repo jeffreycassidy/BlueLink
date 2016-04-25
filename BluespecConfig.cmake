@@ -1,8 +1,8 @@
 #.rst:
-# FindBluespec
+# BluespecConfig
 # ------------
 #
-# Finds the Bluespec compiler and Bluesim simulator
+# Configures the Bluespec compiler and Bluesim simulator
 
 # This will define the following variables:
 #
@@ -23,15 +23,10 @@
 # (copyright TBD)
 # =======
 
-SET(VSIM_VSIM_EXECUTABLE "/usr/local/Altera/14.1/modelsim_ase/bin/vsim" CACHE PATH "VSIM executable")
-SET(VSIM_VLIB_EXECUTABLE "/usr/local/Altera/14.1/modelsim_ase/bin/vlib" CACHE PATH "VLIB executable")
-SET(VSIM_VLOG_EXECUTABLE "/usr/local/Altera/14.1/modelsim_ase/bin/vlog" CACHE PATH "VLOG executable")
-
-SET(BLUELINK_HA_ASSIGNMENT_DELAY "#1" CACHE STRING "Verilog delay to use for host-to-AFU assignments")
-
 IF(NOT "$ENV{BLUESPECDIR}" STREQUAL "")
 	MESSAGE("BLUESPECDIR is present and set to value $ENV{BLUESPECDIR}")
 	SET(Bluespec_DIR $ENV{BLUESPECDIR} CACHE PATH "Path to Bluespec lib dir, as typically set during bsc install")
+    SET(BLUESPEC_ROOT $ENV{BLUESPECDIR}/..)
     SET(Bluespec_FOUND ON)
 ELSE()
 	MESSAGE("BLUESPECDIR is not present - faulty install or environment not set up?")
@@ -83,8 +78,8 @@ LIST(APPEND BLUESPEC_BSC_VERILOG_OPTIONS "-verilog")
 LIST(APPEND BLUESPEC_BSC_VERILOG_OPTIONS ${BLUESPEC_BSC_OPTIONS})
 STRING(REPLACE " " ";" BSCV "${BLUESPEC_BSC_VERILOG_OPTIONS}")
 
-MESSAGE("Pre-expansion: ${BLUESPEC_BSC_VERILOG_OPTIONS}")
-MESSAGE("BSC verilog options: ${BSCV}")
+#MESSAGE("Pre-expansion: ${BLUESPEC_BSC_VERILOG_OPTIONS}")
+#MESSAGE("BSC verilog options: ${BSCV}")
 
 FILE(MAKE_DIRECTORY ${BLUESPEC_BSC_BDIR})
 
@@ -108,8 +103,8 @@ FUNCTION(ADD_BSV_PACKAGE PACKAGE)
 	ADD_CUSTOM_TARGET(${PACKAGE} ALL DEPENDS ${BLUESPEC_BSC_BDIR}/${PACKAGE}.bo)
 
     IF(ARGNLIST)
-        MESSAGE("Dependencies of ${PACKAGE}: ${ARGNLIST}")
-        MESSAGE("File deps: ${PKGDEPS}")
+#        MESSAGE("Dependencies of ${PACKAGE}: ${ARGNLIST}")
+#        MESSAGE("File deps: ${PKGDEPS}")
         ADD_DEPENDENCIES(${PACKAGE} ${ARGNLIST})
     ENDIF()
 ENDFUNCTION()
@@ -206,21 +201,12 @@ FUNCTION(ADD_BLUESPEC_VERILOG_OUTPUT PACKAGE MODULE)
 
     ADD_CUSTOM_TARGET(verilog_${MODULE} DEPENDS ${PACKAGE} ${CMAKE_CURRENT_BINARY_DIR}/${MODULE}.v)
 
-
-## Build the verilog simulation (depends on Modelsim)
-    ADD_CUSTOM_COMMAND(TARGET verilog_${MODULE} POST_BUILD
-        COMMAND ${VSIM_VLOG_EXECUTABLE} -work work ${MODULE}.v
-        COMMAND ${VSIM_VLOG_EXECUTABLE} -work work +define+MODULENAME=${MODULE} +define+HA_ASSIGNMENT_DELAY=${BLUELINK_HA_ASSIGNMENT_DELAY} ${BlueLink_ROOT}/PSLVerilog/top.v ${BlueLink_ROOT}/PSLVerilog/revwrap.v
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} 
-    )
-
 ENDFUNCTION()
 
 
 
 #### Compilation of Bluespec libraries
 
-FILE(GLOB BLUESPEC_LIB_VERILOG_SOURCES ${Bluespec_DIR}/lib/Verilog/*.v)
 
 IF (BLUESPEC_VERILOG_SIM_ASSIGNMENT_DELAY)
     LIST(APPEND BLUESPEC_VERILOG_LIB_OPTS +define+BSV_ASSIGNMENT_DELAY=${BLUESPEC_VERILOG_SIM_ASSIGNMENT_DELAY})
@@ -230,14 +216,19 @@ IF(BLUESPEC_VERILOG_SIM_TIMESCALE)
     LIST(APPEND BLUESPEC_VERILOG_LIB_OPTS -timescale ${BLUESPEC_VERILOG_SIM_TIMESCALE})
 ENDIF()
 
-LIST(APPEND BLUESPEC_VERILOG_LIB_OPTS "+define+TOP=foo")
 
-ADD_CUSTOM_COMMAND(
-    OUTPUT ${CMAKE_BINARY_DIR}/bsvlibs/_info
-    COMMAND ${VSIM_VLIB_EXECUTABLE} bsvlibs
-    COMMAND ${VSIM_VLOG_EXECUTABLE} -work bsvlibs ${BLUESPEC_VERILOG_LIB_OPTS} ${BLUESPEC_LIB_VERILOG_SOURCES}
-    DEPENDS ${BLUESPEC_LIB_VERILOG_SOURCES}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    )
+## Compile the Bluespec Verilog IP
 
-ADD_CUSTOM_TARGET(bsvlibs DEPENDS ${CMAKE_BINARY_DIR}/bsvlibs/_info)
+FIND_PACKAGE(VSIM)
+
+IF(VSIM_FOUND)
+    FILE(GLOB BLUESPEC_LIB_VERILOG_SOURCES ${BLUESPEC_ROOT}/lib/Verilog/*.v)
+    MESSAGE("Bluespec IP folder: ${BLUESPEC_ROOT}/lib/Verilog")
+    LIST(APPEND BLUESPEC_VERILOG_LIB_OPTS "+define+TOP=foo")
+
+    VSIM_ADD_LIBRARY(bsvlibs)
+
+    EXECUTE_PROCESS(
+        COMMAND ${VSIM_VLOG_EXECUTABLE} -work bsvlibs ${BLUESPEC_VERILOG_LIB_OPTS} ${BLUESPEC_LIB_VERILOG_SOURCES}
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+ENDIF()

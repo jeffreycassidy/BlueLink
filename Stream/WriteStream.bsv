@@ -12,35 +12,49 @@ import DReg::*;
 
 import Stream::*;
 
-module mkWriteStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(nbu)) cmdPort)(
+import HList::*;
+import ModuleContext::*;
+
+/** Writes a stream to host memory, consuming 512b half-lines in order.
+ *
+ * The transfer can be throttled by setting a maximum number of parallel tags to use in the StreamConfig parameter.
+ *
+ * As the "stream" name suggests, it performs non-allocating (uncached) writes.
+ *
+ */
+
+module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClientPort#(Bit#(nbu)) cmdPort)(
     Tuple2#(
         StreamCtrl,
         Put#(t)))
     provisos (
-        NumAlias#(nbs,6),       // Bits for slot index
+        Gettable#(ctxT,MemSynthesisStrategy),
+        NumAlias#(nbs,8),       // Bits for slot index
         NumAlias#(nbc,1),       // Bits for chunk counter
         NumAlias#(nbCount,32),  // lots of cache lines
-        Bits#(RequestTag,nbtag),
         Add#(nbs,__some,nbu),
         Bits#(t,512),
         Add#(nbs,nbc,nblut)     // Bits for lut index (slot+chunk)
     );
 
-    let syn = hCons(MemSynthesisStrategy'(AlteraStratixV),hNil);
+    staticAssert(cfg.bufDepth <= 2**valueOf(nbs),"Buffer depth exceeds address counter addressable width");
 
     // Write address management
     Count#(CacheLineCount#(nbCount))    clRemaining <- mkCount(0);
     Count#(CacheLineAddress)            clAddress   <- mkCount(0);
     Reg#(Bool)                          clCommandsDone[2] <- mkCReg(2,False);
 
+    // Tag counters
+    Count#(UInt#(nbs)) tagsInFlight <- mkCount(0);
+
     // FIFO
-    Count#(UInt#(nbs)) issuePtr  <- mkCount(0);     // next slot to issue write command
-    Count#(UInt#(nbs)) writePtr  <- mkCount(0);     // next slot to be written to at input
+    Count#(UInt#(nbs)) issuePtr   <- mkModuloCount(cfg.bufDepth,0);     // next slot to issue write command
+    Count#(UInt#(nbs)) writePtr   <- mkModuloCount(cfg.bufDepth,0);     // next slot to be written to at input
     Count#(UInt#(nbc)) writeChunk <- mkCount(0);
 
     // Buffer & buffer status
-    List#(SetReset)                     bufSlotUsed <- List::replicateM(nBuf,mkConflictFreeSetReset(False));
-    Lookup#(nblut,t)                    bufData <- mkZeroLatencyLookup(syn,nBuf * 2**valueOf(nbc));
+    List#(SetReset)                     bufSlotUsed <- List::replicateM(cfg.bufDepth,mkConflictFreeSetReset(False));
+    Lookup#(nblut,t)                    bufData <- mkZeroLatencyLookupCtx(cfg.bufDepth * 2**valueOf(nbc));
 
     Bool isEmpty            = issuePtr == writePtr && !bufSlotUsed[writePtr];
     Bool bufSlotAvailable   = !bufSlotUsed[writePtr];
@@ -48,10 +62,15 @@ module mkWriteStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(n
     function UInt#(nblut) lutIndex(UInt#(nbs) slot,UInt#(nbc) chunk) = (extend(slot)<<valueOf(nbc)) | extend(chunk);
 
     // issue write commands as long as we have free tags and buffer slots
-    rule issueWrite if (issuePtr != writePtr && bufSlotUsed[issuePtr] && !clCommandsDone[0]);
+    rule issueWrite if (issuePtr != writePtr
+            && bufSlotUsed[issuePtr]
+            && !clCommandsDone[0]
+            && tagsInFlight < fromInteger(cfg.nParallelTags));
+
         issuePtr.incr(1);
         clAddress.incr(1);
         clRemaining.decr(1);
+        tagsInFlight.incr(1);
 
         if (clRemaining == 1)
         begin
@@ -60,10 +79,10 @@ module mkWriteStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(n
         end
 
         let tag <- cmdPort.issue(
-            CmdWithoutTag { com: Write_mi, cabt: Strict, csize: 128, cea: toEffectiveAddress(clAddress) },
+            CmdWithoutTag { com: Write_na, cabt: Strict, csize: 128, cea: toEffectiveAddress(clAddress) },
             pack(extend(issuePtr)));
 
-        $display($time," INFO: Issued write for address %016X",toEffectiveAddress(clAddress));
+        $display($time," INFO: Issued write for address %016X using tag %02X",toEffectiveAddress(clAddress),tag);
     endrule
 
     Reg#(Maybe#(UInt#(nblut))) brReqQ <- mkDReg(tagged Invalid);
@@ -90,6 +109,11 @@ module mkWriteStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(n
 
         if(resp.response != Done)
             $display($time," ERROR: Slot %02X fault response received but not handled ",slot,fshow(resp));
+
+        if(cfg.verbose)
+            $display($time," INFO: Completed write tag %02X (slot %02X)",resp.rtag,slot);
+
+        tagsInFlight.decr(1);
             
         bufSlotUsed[slot].rst;
     endrule
@@ -104,9 +128,13 @@ module mkWriteStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(n
             dynamicAssert(nBytes % 128 == 0, "mkWriteStream: Unaligned transfer size");
             dynamicAssert(ea.addr % 128 == 0,"mkWriteStream: Unaligned transfer address");
 
-            for(Integer i=0;i<nBuf;i=i+1)
+            for(Integer i=0;i<cfg.bufDepth;i=i+1)
                 bufSlotUsed[i].rst;
+
+            tagsInFlight <= 0;
         endmethod
+
+        method Action abort = dynamicAssert(False,"mkWriteStream: abort method is not supported");
 
         method Bool done = clCommandsDone[0] && !List::any( read, bufSlotUsed);
     endinterface,

@@ -10,32 +10,41 @@ import HList::*;
 import Assert::*;
 import DReg::*;
 
-module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(nbu)) cmdPort)(
+import HList::*;
+import ModuleContext::*;
+
+/** Streams bytes from host memory, yielding a stream of 512b half-lines in ascending memory order.
+ *
+ * Both address and byte size must be cache-aligned. As the "stream" name suggests, it does non-allocating (uncached) reads.
+ *
+ */
+
+module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClientPort#(Bit#(nbu)) cmdPort)(
     Tuple2#(
         StreamCtrl,
         GetS#(t)))
     provisos (
-        NumAlias#(nbs,6),       // Bits for slot index
+        Gettable#(ctxT,MemSynthesisStrategy),
+        NumAlias#(nbs,8),       // Bits for slot index
         NumAlias#(nbc,1),       // Bits for chunk counter
         NumAlias#(nbCount,32),  // lots of cache lines
-        Bits#(RequestTag,nbtag),
         Add#(nbs,__some,nbu),   // user data tag big enough to accommodate a slot index
         Bits#(t,512),           // TODO: Make proviso more general on transfer type
         Add#(nbs,nbc,nblut)     // Bits for lut index (slot+chunk)
     );
 
-    Bool verbose=True;
-
-    let syn = hCons(MemSynthesisStrategy'(AlteraStratixV),hNil);
+    staticAssert(cfg.bufDepth <= 2**valueOf(nbs),"Buffer depth exceeds address counter addressable width");
 
     // Read address management
     Count#(CacheLineCount#(nbCount))    clRemaining <- mkCount(0);
     Count#(CacheLineAddress)            clAddress   <- mkCount(0);
     Reg#(Bool)                          clCommandsDone[2] <- mkCReg(2,True);
 
+    Count#(UInt#(nbs))                  tagsInFlight <- mkCount(0);
+
     // FIFO
-    Count#(UInt#(nbs)) issuePtr  <- mkCount(0);     // next slot to issue
-    Count#(UInt#(nbs)) outputPtr <- mkCount(0);     // next slot to be read
+    Count#(UInt#(nbs)) issuePtr  <- mkModuloCount(cfg.bufDepth,0);     // next slot to issue
+    Count#(UInt#(nbs)) outputPtr <- mkModuloCount(cfg.bufDepth,0);     // next slot to be read
 
 
     // Output chunking
@@ -43,11 +52,11 @@ module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(nb
 
     // Buffer & buffer status
     //      Allocated will be True if a request has been issued and the data has not yet been read
-    List#(SetReset)                     bufSlotAllocated     <- List::replicateM(nBuf,mkConflictFreeSetReset(False));
+    List#(SetReset)                     bufSlotAllocated     <- List::replicateM(cfg.bufDepth,mkConflictFreeSetReset(False));
 
     //      Complete will be False if a request has been issued and completed
-    List#(SetReset)                     bufSlotComplete     <- List::replicateM(nBuf,mkConflictFreeSetReset(False));
-    Lookup#(nblut,t)                    bufData             <- mkZeroLatencyLookup(syn,nBuf * 2**valueOf(nbc));
+    List#(SetReset)                     bufSlotComplete     <- List::replicateM(cfg.bufDepth,mkConflictFreeSetReset(False));
+    Lookup#(nblut,t)                    bufData             <- mkZeroLatencyLookupCtx(cfg.bufDepth * 2**valueOf(nbc));
 
     Bool isFull             = issuePtr == outputPtr && bufSlotAllocated[outputPtr];
     Bool outputAvailable    = bufSlotComplete[outputPtr];
@@ -55,10 +64,14 @@ module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(nb
     function UInt#(nblut) lutIndex(UInt#(nbs) slot,UInt#(nbc) chunk) = (extend(slot)<<valueOf(nbc)) | extend(chunk);
 
     // issue read commands as long as we have free tags and buffer slots
-    rule issueRead if (!isFull && !clCommandsDone[0]);
+    rule issueRead if (!isFull
+            && !clCommandsDone[0]
+            && tagsInFlight < fromInteger(cfg.nParallelTags));
+
         issuePtr.incr(1);
         clAddress.incr(1);
         clRemaining.decr(1);
+        tagsInFlight.incr(1);
 
         let tag <- cmdPort.issue(
             CmdWithoutTag { com: Read_cl_na, cabt: Strict, csize: 128, cea: toEffectiveAddress(clAddress) },
@@ -91,8 +104,10 @@ module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(nb
         if(resp.response != Done)
             $display($time," ERROR: Slot %02X fault response received but not handled ",slot,fshow(resp));
 
-        if(verbose)
+        if(cfg.verbose)
             $display($time," INFO: Completed read tag %02X (slot %02X)",resp.rtag,slot);
+
+        tagsInFlight.decr(1);
             
         bufSlotComplete[slot].set;
     endrule
@@ -103,7 +118,7 @@ module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(nb
         let { bw, s } = cmdPort.readdata;
         UInt#(nbs) slot = unpack(truncate(s));
         bufData.write((extend(slot)<<valueOf(nbc)) | extend(bw.bwad),unpack(bw.bwdata));
-    endrule
+    endrule 
 
     return tuple2(
     interface StreamCtrl;
@@ -114,12 +129,19 @@ module mkReadStream#(Integer nBuf,Integer nTags,CmdTagManagerClientPort#(Bit#(nb
             dynamicAssert(nBytes % 128 == 0, "mkReadStream: Unaligned transfer size");
             dynamicAssert(ea.addr % 128 == 0,"mkReadStream: Unaligned transfer address");
 
-            for(Integer i=0;i<nBuf;i=i+1)
+            issuePtr  <= 0;
+            outputPtr <= 0;
+
+            tagsInFlight <= 0;
+
+            for(Integer i=0;i<cfg.bufDepth;i=i+1)
             begin
                 bufSlotAllocated[i].clear;
                 bufSlotComplete[i].clear;
             end
         endmethod
+
+        method Action abort = dynamicAssert(False,"mkReadStream: abort method is not supported");
 
         method Bool done = clCommandsDone[0] && !List::any( read, bufSlotAllocated );
     endinterface,

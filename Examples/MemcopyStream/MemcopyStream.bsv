@@ -24,6 +24,19 @@ import ConfigReg::*;
 
 import CmdTagManager::*;
 
+import ProgrammableLUT::*;
+import HList::*;
+import ModuleContext::*;
+
+typedef struct {
+    Integer     nReadTags;
+    Integer     nReadBuf;
+    Integer     nWriteTags;
+    Integer     nWriteBuf;
+    Bool        verbose;
+    Bool        verboseData;
+} Config;
+
 typedef struct {
     LittleEndian#(EAddress64) addrFrom;
     LittleEndian#(EAddress64) addrTo;
@@ -33,7 +46,11 @@ typedef struct {
 } WED deriving(Bits);
 
 typedef enum { Resetting, Ready, Waiting, Running, Done } Status deriving (Eq,FShow,Bits);
-module mkMemcopyStreamBase(DedicatedAFU#(2));
+
+module [ModuleContext#(ctxT)] mkMemcopyStreamBase#(Config cfg)(DedicatedAFU#(2))
+    provisos (
+        Gettable#(ctxT,MemSynthesisStrategy));
+
     // WED
     Vector#(2,Reg#(Bit#(512))) wedSegs <- replicateM(mkConfigReg(0));
     WED wed = concatSegReg(wedSegs,LE);
@@ -48,7 +65,12 @@ module mkMemcopyStreamBase(DedicatedAFU#(2));
     // Stream controllers
     GetS#(Bit#(512)) idata;
     StreamCtrl istream;
-    { istream, idata } <- mkReadStream(64,64,client[1]);
+    { istream, idata } <- mkReadStream(
+        StreamConfig {
+            verbose: cfg.verbose,
+            bufDepth: cfg.nReadBuf,
+            nParallelTags: cfg.nReadTags },
+        client[1]);
 
     let pwWEDReady <- mkPulseWire, pwStart <- mkPulseWire, pwTerm <- mkPulseWire;
 
@@ -56,7 +78,13 @@ module mkMemcopyStreamBase(DedicatedAFU#(2));
 
     Put#(Bit#(512)) odata;
     StreamCtrl ostream;
-    { ostream, odata } <- mkWriteStream(64,64,client[0]);
+    { ostream, odata } <- mkWriteStream(
+        StreamConfig {
+            verbose: cfg.verbose,
+            nParallelTags: cfg.nWriteTags,
+            bufDepth: cfg.nWriteBuf
+        },
+        client[0]);
 
     //  Master state machine
     Reg#(Status) st <- mkReg(Resetting);
@@ -104,15 +132,18 @@ module mkMemcopyStreamBase(DedicatedAFU#(2));
     rule getOutput;
         let d = idata.first;
         idata.deq;
-        $write($time," INFO: Received data ");
-        for(Integer i=7;i>=0;i=i-1)
+        if (cfg.verboseData)
         begin
-            $write("%016X ",endianSwap((Bit#(64))'(d[i*64+63:i*64])));
-            if (i % 4 == 0)
+            $write($time," INFO: Received data ");
+            for(Integer i=7;i>=0;i=i-1)
             begin
-                $display;
-                if (i > 0)
-                    $write("                                       ");
+                $write("%016X ",endianSwap((Bit#(64))'(d[i*64+63:i*64])));
+                if (i % 4 == 0)
+                begin
+                    $display;
+                    if (i > 0)
+                        $write("                                       ");
+                end
             end
         end
 
@@ -172,9 +203,46 @@ endmodule
 
 
 (*clock_prefix="ha_pclock"*)
-module mkMemcopyStreamAFU(AFUHardware#(2));
+module [Module] mkMemcopyStreamAFU(AFUHardware#(2));
 
-    let dut <- mkMemcopyStreamBase;
+    Config cfg = Config {
+        verboseData: False,
+        verbose: True,
+        nReadTags: 32,
+        nReadBuf: 32,
+        nWriteBuf: 32,
+        nWriteTags: 32};
+
+    let { ctx, dut } <- runWithContext(
+        hCons(MemSynthesisStrategy'(AlteraStratixV),hNil),
+        mkMemcopyStreamBase(cfg)
+    );
+
+    let afu <- mkDedicatedAFU(dut);
+
+    AFUHardware#(2) hw <- mkCAPIHardwareWrapper(afuParityWrapper(afu));
+    return hw;
+endmodule
+
+
+/** Narrowstream is permitted only two write tags, so should be quite a bit slower. */
+
+(*clock_prefix="ha_pclock"*)
+module [Module] mkMemcopyNarrowStreamAFU(AFUHardware#(2));
+
+    Config cfg = Config {
+        verbose: True,
+        verboseData: False,
+        nReadTags: 32,
+        nReadBuf: 32,
+        nWriteBuf: 32,
+        nWriteTags: 2};
+
+    let { ctx, dut } <- runWithContext(
+        hCons(MemSynthesisStrategy'(AlteraStratixV),hNil),
+        mkMemcopyStreamBase(cfg)
+    );
+
     let afu <- mkDedicatedAFU(dut);
 
     AFUHardware#(2) hw <- mkCAPIHardwareWrapper(afuParityWrapper(afu));

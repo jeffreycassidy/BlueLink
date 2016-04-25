@@ -118,12 +118,12 @@ module mkZeroLatencyLookup#(opts_t synOpts,Integer depth)(Lookup#(na,t))
 
 
     method Action write(UInt#(na) addr,t data);
-        dynamicAssert(addr <= fromInteger(depth-1),"Invalid address requested");
+        dynamicAssert(addr <= fromInteger(depth-1),"ProgrammableLUT.write: Invalid address requested");
         _w.write(addr,data);
     endmethod
 
     method ActionValue#(t) lookup(UInt#(na) addr);
-        dynamicAssert(addr <= fromInteger(depth-1),"Invalid address requested");
+        dynamicAssert(addr <= fromInteger(depth-1),"ProgrammableLUT.lookup: Invalid address requested");
         let o <- _w.lookup(addr);
         return o;
     endmethod

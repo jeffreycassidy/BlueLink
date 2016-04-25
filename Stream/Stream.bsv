@@ -1,11 +1,26 @@
 package Stream;
 
 import PSLTypes::*;
+import Cntrs::*;
 
 interface StreamCtrl;
-    method Action start(EAddress64 ea,UInt#(64) nBytes);
-    method Bool done;
+    method Action   start(EAddress64 ea,UInt#(64) nBytes);
+    method Action   abort;
+    method Bool     done;
 endinterface
+
+typedef struct {
+    Integer bufDepth;       // number of buffer entries
+    Integer nParallelTags;  // number of parallel tags to use
+    Bool verbose;           // lots of $display output for debug
+} StreamConfig;
+
+
+
+/** ****** DEPRECATED ******
+ * This older method of buffer allocation does not scale well in hardware (large number of regs -> encoder -> downstream logic
+ * is too slow to run at 250M)
+ */
 
 typedef enum { Free, Issued, Complete } BufferSlotStatus deriving(Eq,FShow,Bits);
 
@@ -21,6 +36,8 @@ endinterface
 
 module mkBufStatus(BufStatusIfc);
     Reg#(BufferSlotStatus) st[2] <- mkCReg(2,Free);
+
+    warningM("Stream::mkBufStatus - instantiation of deprecated module (does not scale well in hardware)");
 
     let pwIssue <- mkPulseWire, pwComplete <- mkPulseWire, pwFree <- mkPulseWire;
 
@@ -49,6 +66,36 @@ module mkBufStatus(BufStatusIfc);
 endmodule
 
 function Action clearStatus(BufStatusIfc r) = r.clear;
+
+
+//// (END DEPRECATED)
+
+
+
+// Slight variation on mkCount(t init), in which the modulus is compile-time variable
+// mkCount rolls over at maxValue#(t), whereas this may roll over sooner
+
+module mkModuloCount#(Integer m,t init)(Count#(t))
+    provisos (
+        Arith#(t),
+        Bits#(t,n));
+
+    Wire#(t) incrVal <- mkDWire(0), decrVal <- mkDWire(0);
+    Reg#(t) ctr[3] <- mkCReg(3,init);
+
+    rule doIncrDecr;
+        ctr[1] <= (ctr[1] + incrVal - decrVal) % fromInteger(m);
+    endrule
+
+    method t _read = ctr[0];
+    method Action update(t val) = asReg(ctr[0])._write(val);
+
+    method Action incr(t val) = incrVal._write(val);
+    method Action decr(t val) = decrVal._write(val);
+    method Action _write(t val) = ctr[2]._write(val);
+endmodule
+
+
 
 
 interface SetReset;

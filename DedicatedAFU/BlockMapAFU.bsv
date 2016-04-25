@@ -23,6 +23,10 @@ import Cntrs::*;
 
 import CmdTagManager::*;
 
+import HList::*;
+import ModuleContext::*;
+import ProgrammableLUT::*;
+
 typedef struct {
     LittleEndian#(EAddress64) addrTo;       // destination address/size (bytes)
     LittleEndian#(UInt#(64))  oSize;
@@ -63,8 +67,14 @@ endinterface
  * 0x38     Input bytes transferred
  */
 
-module mkBlockMapAFU#(BlockMapAFU#(Bit#(512),Bit#(512)) blockMapper)(DedicatedAFU#(2));
+module [ModuleContext#(ctxT)] mkBlockMapAFU#(Integer nReadBuf,Integer nWriteBuf,BlockMapAFU#(Bit#(512),Bit#(512)) blockMapper)(DedicatedAFU#(2))
+    provisos (
+        Gettable#(ctxT,MemSynthesisStrategy)
+        );
     Bool verbose=False;
+
+    Integer nReadTags = 4;
+    Integer nWriteTags = 30;
 
     // WED
     Vector#(2,Reg#(Bit#(512))) wedSegs <- replicateM(mkConfigReg(0));
@@ -80,11 +90,21 @@ module mkBlockMapAFU#(BlockMapAFU#(Bit#(512),Bit#(512)) blockMapper)(DedicatedAF
     // Stream controllers
     GetS#(Bit#(512)) idata;
     StreamCtrl istream;
-    { istream, idata } <- mkReadStream(64,64,client[1]);
+    { istream, idata } <- mkReadStream(
+        StreamConfig {
+            verbose: True,
+            bufDepth: nReadBuf,
+            nParallelTags: nReadTags },
+        client[1]);
 
     Put#(Bit#(512)) odata;
     StreamCtrl ostream;
-    { ostream, odata } <- mkWriteStream(64,64,client[0]);
+    { ostream, odata } <- mkWriteStream(
+        StreamConfig {
+            verbose: True,
+            bufDepth: nWriteBuf,
+            nParallelTags: nWriteTags },
+        client[0]);
 
 
     // Stream counters
@@ -124,6 +144,8 @@ module mkBlockMapAFU#(BlockMapAFU#(Bit#(512),Bit#(512)) blockMapper)(DedicatedAF
             $display($time," INFO: Starting streaming operation");
         endaction
 
+        repeat(2) noAction;
+
         action
             await(istream.done);
             $display($time," INFO: Read stream complete");
@@ -145,6 +167,7 @@ module mkBlockMapAFU#(BlockMapAFU#(Bit#(512),Bit#(512)) blockMapper)(DedicatedAF
     rule sendInput;
         let id = idata.first;
         idata.deq;
+        iCount.incr(1);
         blockMapper.stream.request.put(id);
 
         if (verbose)
@@ -166,6 +189,7 @@ module mkBlockMapAFU#(BlockMapAFU#(Bit#(512),Bit#(512)) blockMapper)(DedicatedAF
     rule getOutput;
         let o <- blockMapper.stream.response.get;
         odata.put(o);
+        oCount.incr(1);
 
         if (verbose)
         begin
@@ -218,13 +242,13 @@ module mkBlockMapAFU#(BlockMapAFU#(Bit#(512),Bit#(512)) blockMapper)(DedicatedAF
                         endaction
                     tagged DWordRead  { index: .i }:
                         localMMIOResp.wset(case(i) matches
-                            0: case(st) matches
+                            0: ((extend(pack(istream.done)) << 49) | (extend(pack(ostream.done) << 48)) | case(st) matches
                                     Resetting: 0;
-                                    Ready: 1;
-                                    Waiting: 2;
-                                    Running: 3;
-                                    Done: 4;
-                                endcase
+                                    Ready: 64'h1;
+                                    Waiting: 64'h2;
+                                    Running: 64'h3;
+                                    Done: 64'h4;
+                                endcase);
                             1: pack(unpackle(wed.block.addrTo));
                             2: pack(unpackle(wed.block.addrFrom));
 

@@ -1,4 +1,4 @@
-IF(Bluespec_FOUND)
+IF(USE_BLUESPEC)
     #ADD_BSV_PACKAGE(AlteraM20k)
     ADD_BSV_PACKAGE(ProgrammableLUT)
     #ADD_DEPENDENCIES(AlteraM20k BRAMStall)

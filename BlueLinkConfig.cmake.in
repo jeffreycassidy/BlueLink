@@ -1,0 +1,26 @@
+## Configure to point to build dir initially
+## Ultimately this should point to the install dir  
+
+SET(BlueLink_DIR "@CMAKE_BINARY_DIR@" CACHE PATH "")
+
+SET(BLUELINK_INCLUDE_DIR "@CMAKE_SOURCE_DIR@/.." CACHE PATH "Location for host include headers")
+SET(BLUELINK_LIBRARY_DIR "@CMAKE_BINARY_DIR@/lib" CACHE PATH "Location for host software libraries")
+
+IF(USE_BLUESPEC)
+	SET(BLUELINK_BDIR_DIR "@CMAKE_BINARY_DIR@/bdir" CACHE PATH "Location for .ba/.bo files")
+ENDIF()
+
+LIST(APPEND BLUELINK_LIBRARIES BlueLinkHost)
+
+LINK_DIRECTORIES(${BLUELINK_LIBRARY_DIR})
+
+## Build the verilog simulation (depends on Modelsim)
+##    ADD_CUSTOM_COMMAND(TARGET verilog_${MODULE} POST_BUILD
+##        COMMAND ${VSIM_VLOG_EXECUTABLE} -work work ${MODULE}.v
+##        COMMAND ${VSIM_VLOG_EXECUTABLE} -work work +define+MODULENAME=${MODULE} +define+HA_ASSIGNMENT_DELAY=${BLUELINK_HA_ASSIGNMENT_DELAY} ${BlueLink_ROOT}/PSLVerilog/top.v ${BlueLink_ROOT}/PSLVerilog/revwrap.v
+##        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} 
+##    )
+
+
+SET(BLUELINK_HA_ASSIGNMENT_DELAY "#1" CACHE STRING "Verilog delay to use for host-to-AFU assignments")
+

@@ -3,17 +3,25 @@ package MemScanChain;
 import Assert::*;
 
 import AlteraM20k::*;
+import BRAMStall::*;
 import PAClib::*;
 import FIFOF::*;
-import ClientServer::*;
 import GetPut::*;
+import BuildVector::*;
 
 import Vector::*;
 
 typedef union tagged {
-    Tuple2#(addrT,MemRequest#(dataT))   Request;
+    void Read;
+    dataT Write;
+} MemRequest#(type dataT) deriving(FShow,Bits);
+
+typedef union tagged {
     dataT                               Response;
-} MemItem#(type addrT,type dataT) deriving(Eq,Bits);
+    Tuple2#(addrT,MemRequest#(dataT))   Request;
+} MemItem#(type addrT,type dataT) deriving(FShow,Bits);
+
+
 
 
 /// Create a PipeOut interface from an RWire, with the specified action done when deq is called
@@ -22,18 +30,21 @@ function PipeOut#(t) f_PipeOut_from_RWire(RWire#(t) rw,Action deqAction) = inter
     method Action deq if (isValid(rw.wget)) = deqAction;
     method Bool notEmpty = isValid(rw.wget);
     method t first if (rw.wget matches tagged Valid .v) = v;
-endinterface
+endinterface;
 
 
 /// mkPriorityJoin: provides output from the lowest-index of the n PipeOut#(t) inputs which has output
 
-module mkPriorityJoin#(Vector#(n,PipeOut#(t)) l)(PipeOut#(t));
+module mkPriorityJoin#(Vector#(n,PipeOut#(t)) piv)(PipeOut#(t))
+    provisos (
+        Bits#(t,nb));
     let pwDeq <- mkPulseWire;
+    let o <- mkRWire;
 
     function Bool pipeOutHasOutput(PipeOut#(t) p) = p.notEmpty;
 
-    Vector#(n,Bool)             hasOutput       = map (pipeOutHasOutput, l);
-    Vector#(TAdd#(n,1),Bool)    hasOutputBefore = scanl( \or , False, hasOutput);
+    Vector#(n,Bool)             hasOutput       = map (pipeOutHasOutput, piv);
+    Vector#(TAdd#(n,1),Bool)    hasOutputBefore = scanl( \|| , False, hasOutput);
 
     for(Integer i=0; i<valueOf(n); i=i+1)
     begin
@@ -65,7 +76,7 @@ endmodule
 module mkMemScanChainElement#(
         Integer bankNum,
 
-        BRAM_PORT_SplitRW#(UInt#(noffs),dataT) brport,                  // BRAM port handling the local requests
+        BRAMPortStall#(UInt#(noffs),dataT) brport,                  // BRAM port handling the local requests
         PipeOut#(MemItem#(UInt#(naddr),dataT)) pi)                      // Incoming pipe
     (PipeOut#(MemItem#(UInt#(naddr),dataT)))
     provisos (
@@ -97,39 +108,34 @@ module mkMemScanChainElement#(
     FIFOF#(MemItem#(UInt#(naddr),dataT))     scanChainInput  <- mkFIFOF;
     mkSink_to_fa(scanChainInput.enq,pi);
 
+    FIFOF#(MemItem#(UInt#(naddr),dataT)) bypassBuf <- mkLFIFOF;
+
 
     // local requests absorb input and may generate output if it's a read
-    rule acceptLocalRequest if (
-            scanChainInput.first matches tagged Request { .addr, .req } &&&
-            splitAddress(req) matches { .bank, .offs } &&&
-            bank == fromInteger(bankNum));
-
+    rule acceptLocalRequest if (isLocalRequest(scanChainInput.first));
         scanChainInput.deq;
 
-        case (req) matches
-            tagged Request { .addr, Read }:                 brport.put(False,offs,?);
-            tagged Request { .addr, tagged Write .data }:   brport.put(True, offs,data);
+        case (scanChainInput.first) matches
+            tagged Request { .addr, Read }:                 brport.putcmd(False,offsetForAddress(addr),?);
+            tagged Request { .addr, tagged Write .data }:   brport.putcmd(True, offsetForAddress(addr),data);
         endcase
     endrule
 
-
-
-    RWire#(MemItem#(UInt#(naddr),dataT))    o <- mkRWire;
-    
-    // first priority: read response passes downstream when available
-    rule readResponseOut;
-        let resp <- brport.read.response.get;
-        o.wset(tagged Response resp);
-    endrule
-
-    // second priority: pass non-local request/data through on otherwise idle cycles
-    (* descending_urgency="readResponseOut,scanChainPass" *)
-    rule scanChainPass if (!isLocalRequest(scanChainInput.first));
+    rule passthroughNonLocal if (!isLocalRequest(scanChainInput.first));
+        bypassBuf.enq(scanChainInput.first);
         scanChainInput.deq;
-        o.wset(
     endrule
 
-    return f_PipeOut_from_RWire(o, pwDeq.send);
+    function MemItem#(UInt#(naddr),dataT) wrapReadData(dataT d) = tagged Response d;
+    let brReadData <- mkFn_to_Pipe(wrapReadData, brport.readdata);
+
+    let o <- mkPriorityJoin(
+        vec(
+            brReadData,
+            f_FIFOF_to_PipeOut(bypassBuf)
+            ));
+
+    return o;
 endmodule
 
 

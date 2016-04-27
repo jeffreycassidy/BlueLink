@@ -1,4 +1,7 @@
-// Copyright (c) 2000-2011 Bluespec, Inc.
+// Original Copyright (c) 2000-2011 Bluespec, Inc.
+// Modifications Copyright (c) 2015-2016 Jeffrey Cassidy & University of Toronto
+// Fixed an error with incorrect read enable for port B
+
 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal

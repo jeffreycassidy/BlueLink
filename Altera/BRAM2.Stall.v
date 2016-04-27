@@ -1,4 +1,7 @@
-// Copyright (c) 2000-2011 Bluespec, Inc.
+// Original Copyright (c) 2000-2011 Bluespec, Inc.
+// Modifications (c) 2015-2016 Jeffrey Cassidy & University of Toronto
+//
+// Modified to add explicit control of the output register via DEQA/DEQB - allows holding output values
 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,7 +30,7 @@
 `endif
 
 // Dual-Ported BRAM (WRITE FIRST)
-module mkBRAM2Stall(CLK,
+module mkBRAM2StallPrimUG(CLK,
              ENA,           // command input port A
              WEA,
              ADDRA,
@@ -35,6 +38,7 @@ module mkBRAM2Stall(CLK,
 
              DOA,           // data output port A
              DEQA,          // deq pulse for port A (advances the output reg)
+             CLRA,
 
              ENB,
              WEB,
@@ -42,7 +46,8 @@ module mkBRAM2Stall(CLK,
              DIB,
 
              DOB,
-             DEQB
+             DEQB,
+             CLRB
          );
 
    parameter                      PIPELINED  = 0;
@@ -58,6 +63,8 @@ module mkBRAM2Stall(CLK,
    input [DATA_WIDTH-1:0]         DIA;
    output [DATA_WIDTH-1:0]        DOA;
    wire   [DATA_WIDTH-1:0]          DOA_i;
+
+   input                            CLRA,CLRB;
 
    input                          ENB;
    input                          WEB;

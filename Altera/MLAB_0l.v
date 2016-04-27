@@ -33,6 +33,13 @@
 //applicable agreement for further details.
 
 
+/** Modifications to Altera-generated IP
+ * Zero-latency MLAB-based lookup
+ *
+ * Parameters added for address/data width to prevent dangling-port warnings
+ */
+
+
 // synopsys translate_off
 `timescale 1 ps / 1 ps
 // synopsys translate_on

@@ -125,7 +125,8 @@ module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClient
         method Action start(EAddress64 ea,UInt#(64) nBytes);
             clAddress   <= toCacheLineAddress(ea);
             clRemaining <= toCacheLineCount(nBytes);
-            clCommandsDone[1] <= False;
+
+            clCommandsDone[1] <= nBytes==0;
             dynamicAssert(nBytes % 128 == 0, "mkReadStream: Unaligned transfer size");
             dynamicAssert(ea.addr % 128 == 0,"mkReadStream: Unaligned transfer address");
 

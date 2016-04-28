@@ -44,8 +44,6 @@ FIND_PACKAGE(BlueLink REQUIRED)
 FIND_PACKAGE(Boost REQUIRED)
 INCLUDE_DIRECTORIES(${Boost_INCLUDE_DIRS})
 
-#FIND_PACKAGE(MODELSIM)
-
 CONFIGURE_FILE(pslse_server.dat.in pslse_server.dat)
 CONFIGURE_FILE(shim_host.dat.in shim_host.dat)
 CONFIGURE_FILE(pslse.parms.in pslse.parms)

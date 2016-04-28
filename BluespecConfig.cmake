@@ -195,7 +195,7 @@ FUNCTION(ADD_BLUESPEC_VERILOG_OUTPUT PACKAGE MODULE)
 ## NOTE: BSC -verilog outputs its files to the same folder as the source file, NOT its working directory
 
 	ADD_CUSTOM_COMMAND(
-		OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${MODULE}.v
+		OUTPUT ${MODULE}.v
         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/${PACKAGE}.bsv ${CMAKE_CURRENT_BINARY_DIR}
 		COMMAND ${BLUESPEC_BSC_EXECUTABLE} ${BSCV} -g ${MODULE} -p ${BLUESPEC_BSC_PATH} -bdir ${BLUESPEC_BSC_BDIR} ${PACKAGE}.bsv 
 		DEPENDS ${BLUESPEC_BSC_BDIR}/${PACKAGE}.bo ${CMAKE_CURRENT_SOURCE_DIR}/${PACKAGE}.bsv
@@ -222,7 +222,11 @@ ENDIF()
 
 ## Compile the Bluespec Verilog IP
 
-FIND_PACKAGE(VSIM)
+OPTION(USE_VSIM OFF)
+
+IF(USE_VSIM)
+    FIND_PACKAGE(VSIM REQUIRED)
+ENDIF()
 
 IF(VSIM_FOUND)
     FILE(GLOB BLUESPEC_LIB_VERILOG_SOURCES ${BLUESPEC_ROOT}/lib/Verilog/*.v)
@@ -253,13 +257,49 @@ IF(VSIM_FOUND)
 
         MESSAGE("Args: ${VPIARG}")
 
-        SET(VSIM_ARGS "vsim -t 1ns -L altera_mf_ver -L bsvlibs -L work -L bsvaltera ${VPIARGSTR} ${MODULE}\; force -drive CLK 1\\'b0, 1\\'b1 @ 5 -repeat 10\; force -drive RST_N 1\\'b0, 1\\'b1 @ 10\; run -all\;")
+        SET(VSIM_ARGS "vsim -t 1ns -L altera_mf_ver -L bsvlibs -L work -L bsvaltera ${VPIARGSTR} ${MODULE}; onfinish exit; force -drive CLK 1'b0, 1'b1 @ 5 -repeat 10; force -drive RST_N 1'b0, 1'b1 @ 10; run -all;")
 
-        ADD_CUSTOM_COMMAND(TARGET verilog_${MODULE} POST_BUILD
+        ADD_CUSTOM_TARGET(vsimrun_${MODULE}
             COMMAND ${VSIM_VLOG_EXECUTABLE} -timescale 1ns/1ns ${MODULE}.v
             COMMAND ${VSIM_VSIM_EXECUTABLE} -c -do "${VSIM_ARGS}"
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+            DEPENDS ${MODULE}.v
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+            VERBATIM)
 
     ENDFUNCTION()
+        
 
+    ## Creates a 32bit VPI library named lib, after building BSV module verilog_MODULE from package PACKAGE
+    ## It generates the necessary init files and links them in
+    # ADD_VPI_LIBRARY(PACKAGE MODNAME LIB SOURCES...)
+    
+    FUNCTION(ADD_VPI_LIBRARY PACKAGE MODNAME LIBNAME)
+        LINK_DIRECTORIES(${BLUESPEC_VPI32_LIBRARY_DIR})
+    
+        SET(SOURCES ${ARGN})
+        LIST(APPEND SOURCES vpi_init_funcs.c)
+    
+        ADD_LIBRARY(${LIBNAME} SHARED ${SOURCES})
+    
+    ## create vpi_init_funcs.c
+
+        ADD_DEPENDENCIES(${LIBNAME} verilog_${MODNAME})
+    
+        ADD_CUSTOM_COMMAND(
+            OUTPUT vpi_init_funcs.c
+            DEPENDS ${CMAKE_BINARY_DIR}/bdir/${PACKAGE}.bo ${CMAKE_CURRENT_BINARY_DIR}/${MODNAME}.v
+            COMMAND ${PERL_EXECUTABLE} ${Bluespec_DIR}/makePLIRegistration.pl vpi_init_funcs.c
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+        SET_TARGET_PROPERTIES(${LIBNAME} PROPERTIES
+            LINK_FLAGS -m32
+            INCLUDE_DIRECTORIES "${VSIM_VPI_INCLUDE_DIR};${BDPIDEVICE_INCLUDE_DIR};${BLUESPEC_VPI_INCLUDE_DIR}")
+        TARGET_COMPILE_OPTIONS(${LIBNAME} PUBLIC -m32)
+    
+        ## VERY IMPORTANT: specific libstdc++.so.6 line below prevents problems where a Modelsim version without GLIBCXX.3.4.20 gets
+        ## called up and causes a link failure
+    
+        TARGET_LINK_LIBRARIES(${LIBNAME} bdpi /usr/lib/i386-linux-gnu/libstdc++.so.6 gmp)
+    
+    ENDFUNCTION()
 ENDIF()

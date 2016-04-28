@@ -124,7 +124,7 @@ module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClien
         method Action start(EAddress64 ea,UInt#(64) nBytes);
             clAddress   <= toCacheLineAddress(ea);
             clRemaining <= toCacheLineCount(nBytes);
-            clCommandsDone[1] <= False;
+            clCommandsDone[1] <= nBytes==0;
             dynamicAssert(nBytes % 128 == 0, "mkWriteStream: Unaligned transfer size");
             dynamicAssert(ea.addr % 128 == 0,"mkWriteStream: Unaligned transfer address");
 

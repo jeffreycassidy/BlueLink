@@ -22,6 +22,20 @@ typedef union tagged {
 } MemItem#(type addrT,type dataT) deriving(FShow,Bits);
 
 
+//instance FShow#(MemRequest#(dataT));
+//    function Fmt fshow(MemRequest#(dataT) req) provisos (FShow#(dataT)) = case (req) matches
+//        tagged Read:        fshow("Read       ");
+//        tagged Write .d:    fshow("Write ")+fshow(d);
+//    endcase;
+//endinstance
+//
+//instance FShow#(MemItem#(addrT,dataT));
+//    function Fmt fshow(MemItem#(addrT,dataT) i) provisos (FShow#(dataT)) = case (i) matches
+//        tagged Response .d:             fshow("Response ")++fshow(d);
+//        tagged Request { .addr, .req }: fshow("Request address ")++fshow(pack(addr))+fshow(req);
+//    endcase;
+//endinstance
+
 
 
 /// Create a PipeOut interface from an RWire, with the specified action done when deq is called
@@ -75,8 +89,7 @@ endmodule
 
 module mkMemScanChainElement#(
         Integer bankNum,
-
-        BRAMPortStall#(UInt#(noffs),dataT) brport,                  // BRAM port handling the local requests
+        BRAMPortStall#(UInt#(noffs),dataT) brport,                      // BRAM port handling the local requests
         PipeOut#(MemItem#(UInt#(naddr),dataT)) pi)                      // Incoming pipe
     (PipeOut#(MemItem#(UInt#(naddr),dataT)))
     provisos (
@@ -140,49 +153,147 @@ endmodule
 
 
 
-/** Implements the actual scan chain
- * For correctness, the BRAM_PORT_SplitRW must be able to backpressure the input if the output is stalled. If not, elements will be
- * dropped.
- *
- * For full throughput, it should be able to do so with internal buffering so that in steady-state it can always accept input.
+/** Creates a memory scan chain.
+ * 
+ * Each of the block RAM ports must be exactly 2**noffs deep, addressed by UInt#(noffs)
  */
 
- //   function BRAM_PORT_Stall#(offsT,dataT) getPortA(BRAM_DUAL_PORT_Stall#(offsT,dataT) _br) = _br.a;
-//    List#(BRAM_DUAL_PORT_Stall#(offsT,dataT))   br  <- List::replicateM(valueOf(nBanks),mkBRAM2Stall(bankDepth));
-//    List#(BRAM_PORT_SplitRW#(offsT,dataT))      brs <- List::mapM(mkBRAMPortSplitRW, List::map(getPortA,br));
+module mkMemScanChain#(
+    Vector#(nBanks,BRAMPortStall#(UInt#(nbOffs),dataT)) brport,
+    PipeOut#(MemItem#(addrT,dataT)) pi)
+    (PipeOut#(MemItem#(addrT,dataT)))
+    provisos (
+        Log#(nBanks,nbBankIdx),
 
-//module mkMemScanChain#(Vector#(nBanks,BRAM_PORT_SplitRW#(UInt#(noffs),dataT)) brport,PipeOut#(MemItem#(UInt#(naddr),dataT)) pi)
-//    (PipeOut#(dataT))
-//    provisos (
-//        Add#(noffs,nbank,naddr),
-//        Add#(1,__some,nBanks),
-//        Alias#(addrT,UInt#(naddr)),
-//        Alias#(dataT,Bit#(512))
-//    );
-//
-//    // The scan chain elements
-//    Vector#(nBanks,PipeOut#(MemItem#(addrT,dataT))) el;
-//
-//    el[0]  <- mkMemScanChainElement(0, brport[0],pi);
-//
-//    for(Integer i=1;i<valueOf(nBanks);i=i+1)
-//        el[i] <- mkMemScanChainElement(i, brport[i], el[i-1]);
-//
-//    // Check that output is data only
-//    rule checkResponse;
-//        case (last(el).first) matches
-//            tagged Request .*:
-//                dynamicAssert(False,"Request arrived at end of scan chain");
-//            tagged Response .*:
-//                noAction;
-//        endcase
-//    endrule
-//
-//    // Strip off the tagged union at the end
-//    function dataT getData(MemItem#(UInt#(naddr),dataT) i) = i.Response;
-//    let o <- mkFn_to_Pipe(getData,last(el));
-//
-//    return o;
-//endmodule
+        Add#(nbOffs,nbBankIdx,nbMinAddress),    // ensure address line is big enough for contents
+        Add#(nbMinAddress,__lessthan0,nbAddress),
+
+        Add#(nbOffs,__lessthan1,nbAddress),     // redundant proviso (can be inferred from two above)
+
+        Add#(1,__lessthan2,nBanks),
+        Alias#(addrT,UInt#(nbAddress)),
+        Bits#(dataT,nbData)
+    );
+
+    // The scan chain elements
+    Vector#(nBanks,PipeOut#(MemItem#(addrT,dataT))) el;
+
+    el[0]  <- mkMemScanChainElement(0, brport[0],pi);
+
+    for(Integer i=1;i<valueOf(nBanks);i=i+1)
+        el[i] <- mkMemScanChainElement(i, brport[i], el[i-1]);
+
+    return last(el);
+endmodule
+
+
+
+
+
+/** Group a set of n v-wide BRAMs into a single w-wide interface (w=nv).
+ * Bank striping occurs along the lowest-order bits. The number of banks n must be a power of 2.
+ *
+ *  w       Group-side bit width
+ *  n       Number of banks to group
+ *  v       Individual-side padded bit width
+ *
+ * In Bluespec packing convention, LSB/rightmost ends up in x[0], ie. 64b 0x0123456789ABCDEF split into 4 16b words
+ *                                            [0]       [1]       [2]       [3]
+ *                              words:        0xCDEF    0x89AB    0x4567    0x0123
+ *
+ * In a little-endian machine with ascending memory addresses ------>
+ *                              bytes:        0xEF 0xCD 0xAB 0x89 0x67 0x45 0x23 0x01 
+ *                              16b words:    0xCDEF    0x89AB    0x4567    0x0123
+ *                              32b words:    0x89ABCDEF          0x01234567
+ *                              64b word:     0x0123456789ABCDEF
+ *
+ * So if the n-bit word is sourced from a little-endian machine, then the order of v-bit subwords is in _descending_ order of memory
+ * address, which is probably not what is wanted.
+ *
+ * The CAPI world works in increments of big-endian 512b half-lines. In this instance where the transfer granularity is less than
+ * 512b, then an endian swap on the 512b word will sort out both the subword order, and the subword endianness.
+ *
+ */
+
+
+// addrT:       Address type (same on both sides)
+// groupDataT:  The grouped address type
+// nBanks:      Number of banks
+// dataT:       The individual BRAM data type
+
+interface BRAMPortGroup#(type addrT,type groupDataT,numeric type n,type dataT);
+    interface BRAMPortStall#(addrT,groupDataT)          grouped;
+    interface Vector#(n,BRAMPortStall#(addrT,dataT))    individual;
+
+    method Action                                       enableGrouped(Bool en);
+endinterface
+
+function PipeOut#(t) gatePipeOut(Bool pred,PipeOut#(t) p) = interface PipeOut;
+    method Action deq if (pred) = p.deq;
+    method t first if (pred) = p.first;
+    method Bool notEmpty = pred && p.notEmpty;
+endinterface;
+
+
+module mkBRAMGroup#(Vector#(n,BRAMPortStall#(UInt#(nbAddr),dataT)) br)
+    (BRAMPortGroup#(UInt#(nbAddr),Bit#(w),n,dataT))
+    provisos (
+        Mul#(v,n,w),                // determine padded bit size
+        Bits#(dataT,nbData),
+        Add#(nbData,nbPad,v),
+
+        Alias#(UInt#(nbAddr),addrT)
+    );
+
+    Reg#(Bool)      enGroup         <- mkReg(False);
+
+    // split/join group data,ie convert Bit#(w) <-> Vector#(n,dataT)
+    function Vector#(n,dataT) splitGroupData(Bit#(w) b);
+        Vector#(n,Bit#(v)) bv = unpack(b);
+        return map(compose(unpack,truncate),bv);
+    endfunction
+
+    function Bit#(w) joinGroupData(Vector#(n,dataT) v);
+        Vector#(n,Bit#(v)) bv = map(compose(extend,pack), v);
+        return pack(bv);
+    endfunction
+
+    // implement individual accesses by gating
+    Vector#(nBanks,BRAMPortStall#(addrT,dataT)) indiv;
+    for(Integer i=0;i<valueOf(nBanks);i=i+1)
+        indiv[i] = interface BRAMPortStall;
+            method Action putcmd(Bool wr,addrT addr,dataT data) if (!enGroup) = br[i].putcmd(wr,addr,data);
+            method Action clear if (!enGroup) = br[i].clear;
+
+            interface PipeOut readdata = gatePipeOut(!enGroup, br[i].readdata);
+        endinterface;
+
+    // all block RAM should be ready at the same time in group mode (depend on this in notEmpty below)
+    for(Integer i=1;i<valueOf(n);i=i+1)
+        continuousAssert(!enGroup || br[i].readdata.notEmpty == br[0].readdata.notEmpty,"notEmpty mismatch in grouped mode");
+
+    // helper functions for mapping actions over block ram ports
+    function Action doPutCmd(Bool wr,a addr,d data,BRAMPortStall#(a,d) _br) = _br.putcmd(wr,addr,data);
+    function Action doClear(BRAMPortStall#(a,d) _br) = _br.clear;
+    function Action doDeq(BRAMPortStall#(a,d) _br) = _br.readdata.deq;
+    function d      getFirst(BRAMPortStall#(a,d) _br) = _br.readdata.first;
+
+    interface Vector individual = indiv;
+
+    interface BRAMPortStall grouped;
+        method Action putcmd(Bool wr,addrT addr,Bit#(w) data) if (enGroup)
+            = zipWithM_(doPutCmd(wr,truncate(addr)),splitGroupData(data),br);
+
+        method Action clear if (enGroup) = mapM_(doClear, br);
+
+        interface PipeOut readdata;
+            method Action deq if (enGroup) = mapM_(doDeq, br);
+            method Bit#(w) first if (enGroup) = joinGroupData(map(getFirst,br));
+            method Bool notEmpty = enGroup && br[0].readdata.notEmpty;
+        endinterface
+    endinterface
+
+    method Action enableGrouped(Bool en) = enGroup._write(en);
+endmodule
 
 endpackage

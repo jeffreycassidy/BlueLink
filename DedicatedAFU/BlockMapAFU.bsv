@@ -48,6 +48,8 @@ typedef enum { Resetting, Ready, Waiting, Running, Done } Status deriving (Eq,FS
 interface BlockMapAFU#(type inputT,type outputT);
     interface Server#(inputT,outputT)               stream;
     interface Server#(MMIORWRequest,Bit#(64))       mmio;
+
+    method Bool                                     done;
 endinterface
 
 

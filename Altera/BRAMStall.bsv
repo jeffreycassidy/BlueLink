@@ -93,4 +93,8 @@ module mkBRAMStallPipeOut#(BRAM_PORT_Stall_PrimUG#(addrT,dataT) brport)(BRAMPort
     endinterface
 endmodule
 
+
+function BRAMPortStall#(a,d) portA(BRAM2PortStall#(a,d) br) = br.porta;
+function BRAMPortStall#(a,d) portB(BRAM2PortStall#(a,d) br) = br.portb;
+
 endpackage

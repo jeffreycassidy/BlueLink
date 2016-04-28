@@ -28,21 +28,21 @@ template<typename AddressType,typename DataType>struct Request
 	typedef DataType	Data;
 
 	bool 		request;
-	bool 		write;
 	Address 	addr;
+	bool 		write;
 	Data 		data;
 };
 
 template<class Packer,class Address,class Data>Packer& operator&(Packer& P,const Request<Address,Data>& a)
 {
-	P & a.request & a.write & a.addr & a.data;
+	P & a.request & a.addr & a.write & a.data;
 	return P;
 }
 
 
 template<class Unpacker,class Address,class Data>Unpacker& operator&(Unpacker& P,Request<Address,Data>& a)
 {
-	P & a.request & a.write & a.addr & a.data;
+	P & a.request & a.addr & a.write & a.data;
 	return P;
 }
 
@@ -64,8 +64,10 @@ private:
 			ReadPortPipeWrapper<
 				Stimulus,
 				MemScanChainTest,
-				Request<Address,Data>>(t,49)
-		{}
+				Request<Address,Data>>(t,50)
+		{
+			status(Ready);
+		}
 
 
 	private:
@@ -75,6 +77,8 @@ private:
 		std::vector<std::pair<uint64_t,Request<Address,Data>>>	m_history;		// history of values deq'd, with timestamp
 
 		std::vector<Data>										m_expect;		// expected responses
+
+		unsigned m_addr=0;
 	};
 
 
@@ -94,8 +98,6 @@ private:
 	};
 
 public:
-
-	Request<Address,Data> nextRequest();
 
 	MemScanChainTest(const char* argstr,const uint32_t* data) :
 		Device({ &m_stimPort, &m_resultPort }),
@@ -126,12 +128,38 @@ StandardNewFactory<MemScanChainTest> MemScanChainTest::s_factory("MemScanChainTe
 
 
 
+#include <iostream>
+#include <iomanip>
+
+using namespace std;
 
 void MemScanChainTest::Stimulus::implementDeq()
 {
+	// log to the history vector
 	m_history.emplace_back(device()->timebase(),m_current);
-	m_current = device()->nextRequest();
+
+	const auto f = cout.flags();
+	cout << "Time " << setw(20) << dec << device()->timebase() << "  IN ";
+	if (!m_current.request)
+		cout << "Data:    " << hex << setw(16) << m_current.data << endl;
+	else
+	{
+		cout << "Request: " << (m_current.write ? "Write" : " Read") << " address " << hex << setw(16) << m_current.addr;
+		if (m_current.write)
+			cout << " data " << setw(16) << m_current.data;
+		cout << endl;
+	}
+	cout.flags(f);
+
+	// update output data
+	m_current.write=false;
+	m_current.request=false;
+	m_current.addr=m_addr++;
+	m_current.data=0xffff << 16 | (m_addr << 8) | m_addr;
 	set(m_current);
+
+	if (m_addr == 300)
+		status(End);
 }
 
 void MemScanChainTest::preClose()
@@ -139,32 +167,17 @@ void MemScanChainTest::preClose()
 	std::cout << "Testbench closing" << std::endl;
 }
 
-Request<MemScanChainTest::Address,MemScanChainTest::Data> MemScanChainTest::nextRequest()
-{
-	Request<MemScanChainTest::Address,MemScanChainTest::Data> ret;
-	ret.write=false;
-	ret.request=false;
-	ret.addr=0;
-	ret.data=0;
-	return ret;
-}
 
-
-
-#include <iostream>
-#include <iomanip>
-
-using namespace std;
 
 void MemScanChainTest::Output::write(const Request<MemScanChainTest::Address,MemScanChainTest::Data>& t)
 {
 	const auto f = cout.flags();
-	cout << "Time " << setw(20) << dec << device()->timebase() << ' ';
+	cout << "Time " << setw(20) << dec << device()->timebase() << " OUT ";
 	if (!t.request)
-		cout << "Read response: " << hex << setw(16) << t.data << endl;
+		cout << "Data:    " << hex << setw(16) << t.data << endl;
 	else
 	{
-		cout << "Passthrough: " << (t.write ? "Write" : " Read") << " address " << hex << setw(16) << t.addr;
+		cout << "Request: " << (t.write ? "Write" : " Read") << " address " << hex << setw(16) << t.addr;
 		if (t.write)
 			cout << " data " << setw(16) << t.data;
 		cout << endl;

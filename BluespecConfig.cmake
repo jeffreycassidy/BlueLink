@@ -26,7 +26,10 @@
 IF(NOT "$ENV{BLUESPECDIR}" STREQUAL "")
 	MESSAGE("BLUESPECDIR is present and set to value $ENV{BLUESPECDIR}")
 	SET(Bluespec_DIR $ENV{BLUESPECDIR} CACHE PATH "Path to Bluespec lib dir, as typically set during bsc install")
-    SET(BLUESPEC_ROOT $ENV{BLUESPECDIR}/..)
+    SET(BLUESPEC_ROOT $ENV{BLUESPECDIR}/.. CACHE PATH "Bluespec root dir")
+    SET(BLUESPEC_VPI32_LIBRARY_DIR $ENV{BLUESPECDIR}/VPI/g++4 CACHE PATH "Path to libbdpi.so for 32 vsim")
+    SET(BLUESPEC_VPI64_LIBRARY_DIR $ENV{BLUESPECDIR}/VPI/g++4_64 CACHE PATH "Path to libbdpi.so for 32 vsim")
+    SET(BLUESPEC_VPI_INCLUDE_DIR $ENV{BLUESPECDIR}/VPI CACHE PATH "Path to bdpi.h")
     SET(Bluespec_FOUND ON)
 ELSE()
 	MESSAGE("BLUESPECDIR is not present - faulty install or environment not set up?")
@@ -147,7 +150,7 @@ FUNCTION(ADD_BLUESIM_TESTCASE PACKAGE TESTCASE)
         ADD_DEPENDENCIES(${TESTCASE} ${BDPI_LIB})
     ENDFOREACH()
 
-    MESSAGE("BDPI -l args for ${TESTCASE}: ${BDPI_LIB_ARGS}")
+#    MESSAGE("BDPI -l args for ${TESTCASE}: ${BDPI_LIB_ARGS}")
 
 
 
@@ -163,11 +166,11 @@ FUNCTION(ADD_BLUESIM_TESTCASE PACKAGE TESTCASE)
         LIST(APPEND BDPI_LIB_DIR_ARGS "-L;${BDPI_LIB_DIR}")
     ENDFOREACH()
 
-    MESSAGE("BDPI_LIB_DIR_ARGS=${BDPI_LIB_DIR_ARGS}")
+#    MESSAGE("BDPI_LIB_DIR_ARGS=${BDPI_LIB_DIR_ARGS}")
     MESSAGE("LD_LIBRARY_PATH=${LDLIB}")
 
 
-    MESSAGE("BDPI -L args for ${TESTCASE}: ${BDPI_LIB_DIR_ARGS}")
+#    MESSAGE("BDPI -L args for ${TESTCASE}: ${BDPI_LIB_DIR_ARGS}")
 
 	ADD_CUSTOM_COMMAND(
 		OUTPUT test_${TESTCASE}
@@ -240,7 +243,17 @@ IF(VSIM_FOUND)
     FUNCTION(ADD_BLUESPEC_VERILOG_TESTCASE PACKAGE MODULE)
         ADD_BLUESPEC_VERILOG_OUTPUT(${PACKAGE} ${MODULE})
 
-        SET(VSIM_ARGS "vsim -t 1ns -L altera_mf_ver -L bsvlibs -L work -L bsvaltera ${MODULE}\; force -drive CLK 1\\'b0, 1\\'b1 @ 5 -repeat 10\; force -drive RST_N 1\\'b0, 1\\'b1 @ 10\; run -all\;")
+        # Additional args are VPI libs
+
+        FOREACH(VPILIB ${ARGN})
+            LIST(APPEND VPIARG -pli ${VPILIB})
+        ENDFOREACH()
+
+        STRING(REPLACE ";" " " VPIARGSTR "${VPIARG}")
+
+        MESSAGE("Args: ${VPIARG}")
+
+        SET(VSIM_ARGS "vsim -t 1ns -L altera_mf_ver -L bsvlibs -L work -L bsvaltera ${VPIARGSTR} ${MODULE}\; force -drive CLK 1\\'b0, 1\\'b1 @ 5 -repeat 10\; force -drive RST_N 1\\'b0, 1\\'b1 @ 10\; run -all\;")
 
         ADD_CUSTOM_COMMAND(TARGET verilog_${MODULE} POST_BUILD
             COMMAND ${VSIM_VLOG_EXECUTABLE} -timescale 1ns/1ns ${MODULE}.v

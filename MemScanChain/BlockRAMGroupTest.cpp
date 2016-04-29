@@ -49,14 +49,15 @@ int main(int argc,char **argv)
 	const bool sim = true;
 #endif
 
-	const size_t Ndw = argc > 1 ? atoi(argv[1]) : 32768;
+	const size_t Ndw = 16384;
 
 	// allocate space for input/output/golden
 	vector<
 		Input,
-		boost::alignment::aligned_allocator<Input,128>> input(Ndw,0);
+		boost::alignment::aligned_allocator<Input,128>> input(Ndw,0), output(Ndw,0);
 
 	assert(boost::alignment::is_aligned(128,input.data()));
+	assert(boost::alignment::is_aligned(128,output.data()));
 
 	for(unsigned i=0;i<input.size();++i)
 		input[i]=0xff00000000000000ULL | i;
@@ -66,10 +67,11 @@ int main(int argc,char **argv)
 	StackWED<MemLoadWED,128,128> wed;
 
 	wed->src=input.data();
-	wed->iSize=input.size()*sizeof(Input);
-	wed->dst=nullptr;
-	wed->oSize=0;
+	wed->dst=output.data();
+	wed->iSize=wed->oSize=input.size()*sizeof(Input);
 
+	cout << "To:   " << hex << setw(16) << wed->dst << endl;
+	cout << "Size: " << hex << setw(16) << wed->oSize << endl;
 	cout << "From: " << hex << setw(16) << wed->src << endl;
 	cout << "Size: " << hex << setw(16) << wed->iSize << endl;
 
@@ -83,19 +85,16 @@ int main(int argc,char **argv)
 		cout << "  Waiting for 'waiting' status (st=" << st << " looking for " << STATUS_WAITING << ")" << endl;
 		usleep(sim ? 100000 : 100);
 	}
-//
-//	for(unsigned i=0;i<4;++i)
-//		cout << "MMIO[" << setw(6) << hex << (i<<3) << "] " << setw(16) << hex << afu.mmio_read64(i<<3) << endl;
 
 	cout << "Starting" << endl;
 	afu.mmio_write64(0,0x0ULL);		// start signal: write 0 to MMIO 0
 
-	unsigned timeout=1000;
+	unsigned timeout=100;
 
 	for(N=0;N < timeout && (st=afu.mmio_read64(0))&0xff != STATUS_DONE;++N)	// wait for done status
 	{
 		cout << "  status " << st << endl << flush;
-		usleep(sim ? 100000 : 1000);
+		usleep(sim ? 1000000 : 1000);
 	}
 
 	if (N == timeout)
@@ -104,6 +103,9 @@ int main(int argc,char **argv)
 	cout << "Terminating" << endl;
 	afu.mmio_write64(0,0x1ULL);
 
+	for(unsigned i=0;i<Ndw;++i)
+		if (output[i] != input[i])
+			cout << "ERROR: Memory mismatch at offset " << setw(16) << hex << i << " expecting " << setw(16) << input[i] << " but received " << setw(16) << output[i] << endl;
+
 	return 0;
 }
-

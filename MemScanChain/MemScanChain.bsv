@@ -22,22 +22,6 @@ typedef union tagged {
 } MemItem#(type addrT,type dataT) deriving(FShow,Bits);
 
 
-//instance FShow#(MemRequest#(dataT));
-//    function Fmt fshow(MemRequest#(dataT) req) provisos (FShow#(dataT)) = case (req) matches
-//        tagged Read:        fshow("Read       ");
-//        tagged Write .d:    fshow("Write ")+fshow(d);
-//    endcase;
-//endinstance
-//
-//instance FShow#(MemItem#(addrT,dataT));
-//    function Fmt fshow(MemItem#(addrT,dataT) i) provisos (FShow#(dataT)) = case (i) matches
-//        tagged Response .d:             fshow("Response ")++fshow(d);
-//        tagged Request { .addr, .req }: fshow("Request address ")++fshow(pack(addr))+fshow(req);
-//    endcase;
-//endinstance
-
-
-
 /// Create a PipeOut interface from an RWire, with the specified action done when deq is called
 
 function PipeOut#(t) f_PipeOut_from_RWire(RWire#(t) rw,Action deqAction) = interface PipeOut;
@@ -67,6 +51,7 @@ module mkPriorityJoin#(Vector#(n,PipeOut#(t)) piv)(PipeOut#(t))
             o.wset(piv[i].first);
         endrule
 
+        // fire_when_enabled  ==>  notEmpty -> deq can fire
         (* fire_when_enabled *)
         rule deqFirstNonEmpty if (pwDeq && hasOutput[i] && !hasOutputBefore[i]);
             piv[i].deq;
@@ -78,39 +63,42 @@ endmodule
 
 
 
-/** Interfaces a pipe-interfaced BRAM into a scan chain. 
- *  noffs   Exact number of bits to express the offset component of the address
- *  naddr   Number of address bits
+/** Interfaces a pipe-interfaced BRAM into a scan chain. The bank address is taken from the bottom log(nBanks) address bits,
+ * so proper usage would have nBanks be a power of 2.
  *
- *  nbank   (implied from naddr-noffs) number of bits to address the bank
- *
- * Bank striping happens along the (noffs) low-order address bits
+ * Type parameters
+ *  nbOffs      Exact number of bits to express the offset component of the address (depth must be 2**noffs)
+ *  nbAddr      Number of scan chain address bits
+ *  nbBank      (implied from naddr-noffs) number of bits to address the bank
+ * 
+ * Parameters
+ *  bankNum     The number for this bank
  */
 
 module mkMemScanChainElement#(
         Integer bankNum,
-        BRAMPortStall#(UInt#(noffs),dataT) brport,                      // BRAM port handling the local requests
-        PipeOut#(MemItem#(UInt#(naddr),dataT)) pi)                      // Incoming pipe
-    (PipeOut#(MemItem#(UInt#(naddr),dataT)))
+        BRAMPortStall#(UInt#(nbOffs),dataT) brport,                      // BRAM port handling the local requests
+        PipeOut#(MemItem#(UInt#(nbAddr),dataT)) pi)                      // Incoming pipe
+    (PipeOut#(MemItem#(UInt#(nbAddr),dataT)))
     provisos (
-        Add#(noffs,nbank,naddr),
+        Add#(nbOffs,nbBank,nbAddr),
         Bits#(dataT,nd)
     );
     
     
     // manipulate addresses (bank,offset) <-> address
-    function UInt#(nbank) bankForAddress(UInt#(naddr) addr)   = truncate(addr >> valueOf(noffs)); 
-    function UInt#(noffs) offsetForAddress(UInt#(naddr) addr) = truncate(addr);
+    function UInt#(nbBank) bankForAddress(UInt#(nbAddr) addr)   = truncate(addr >> valueOf(nbOffs)); 
+    function UInt#(nbOffs) offsetForAddress(UInt#(nbAddr) addr) = truncate(addr);
 
-    function Tuple2#(UInt#(nbank),UInt#(noffs)) splitAddress(UInt#(naddr) addr) =
+    function Tuple2#(UInt#(nbBank),UInt#(nbOffs)) splitAddress(UInt#(nbAddr) addr) =
         tuple2(bankForAddress(addr), offsetForAddress(addr));
 
-    function UInt#(naddr) joinAddress(UInt#(nbank) bank,UInt#(noffs) offset)    =
-        (extend(bank) << valueOf(noffs)) | extend(offset);
+    function UInt#(nbAddr) joinAddress(UInt#(nbBank) bank,UInt#(nbOffs) offset)    =
+        (extend(bank) << valueOf(nbOffs)) | extend(offset);
 
 
     // check if a given MemItem is a local request or not (response or non-local request)
-    function Bool isLocalRequest(MemItem#(UInt#(naddr),dataT) i) = case (i) matches
+    function Bool isLocalRequest(MemItem#(UInt#(nbAddr),dataT) i) = case (i) matches
         tagged Request { .addr, .* }: (bankForAddress(addr) == fromInteger(bankNum));
         default: False;
     endcase;
@@ -118,10 +106,10 @@ module mkMemScanChainElement#(
 
     
     // 2-stage input FIFO to ensure no combinational path going upstream
-    FIFOF#(MemItem#(UInt#(naddr),dataT))     scanChainInput  <- mkFIFOF;
+    FIFOF#(MemItem#(UInt#(nbAddr),dataT))     scanChainInput  <- mkFIFOF;
     mkSink_to_fa(scanChainInput.enq,pi);
 
-    FIFOF#(MemItem#(UInt#(naddr),dataT)) bypassBuf <- mkLFIFOF;
+    FIFOF#(MemItem#(UInt#(nbAddr),dataT)) bypassBuf <- mkLFIFOF;
 
 
     // local requests absorb input and may generate output if it's a read
@@ -153,34 +141,37 @@ endmodule
 
 
 
-/** Creates a memory scan chain.
- * 
- * Each of the block RAM ports must be exactly 2**noffs deep, addressed by UInt#(noffs)
+/** Creates a memory scan chain of MemScanChainElement as defined above, from an array of block RAM ports.
+ *
+ * The result is a simple Pipe#(MemItem#(addrT,dataT)), enabling concatenation of multiple scan chains.
+ *
+ *  addrT,dataT     Scan chain address and data
+ *  UInt#(nboffs)   Element indexing (element depth must be exactly 2**noffs)
  */
 
 module mkMemScanChain#(
-    Vector#(nBanks,BRAMPortStall#(UInt#(nbOffs),dataT)) brport,
+    Vector#(nElements,BRAMPortStall#(UInt#(nbOffs),dataT)) brport,
     PipeOut#(MemItem#(addrT,dataT)) pi)
     (PipeOut#(MemItem#(addrT,dataT)))
     provisos (
-        Log#(nBanks,nbBankIdx),
+        Log#(nElements,nbBankIdx),
 
         Add#(nbOffs,nbBankIdx,nbMinAddress),    // ensure address line is big enough for contents
         Add#(nbMinAddress,__lessthan0,nbAddress),
 
-        Add#(nbOffs,__lessthan1,nbAddress),     // redundant proviso (can be inferred from two above)
+        Add#(nbOffs,__lessthan1,nbAddress),     // redundant proviso (implied by the two above, but bsc needs it)
 
-        Add#(1,__lessthan2,nBanks),
+        Add#(1,__lessthan2,nElements),
         Alias#(addrT,UInt#(nbAddress)),
         Bits#(dataT,nbData)
     );
 
     // The scan chain elements
-    Vector#(nBanks,PipeOut#(MemItem#(addrT,dataT))) el;
+    Vector#(nElements,PipeOut#(MemItem#(addrT,dataT))) el;
 
     el[0]  <- mkMemScanChainElement(0, brport[0],pi);
 
-    for(Integer i=1;i<valueOf(nBanks);i=i+1)
+    for(Integer i=1;i<valueOf(nElements);i=i+1)
         el[i] <- mkMemScanChainElement(i, brport[i], el[i-1]);
 
     return last(el);
@@ -190,8 +181,15 @@ endmodule
 
 
 
-/** Group a set of n v-wide BRAMs into a single w-wide interface (w=nv).
- * Bank striping occurs along the lowest-order bits. The number of banks n must be a power of 2.
+/** Group a set of n v-wide BRAMs into a single w-wide interface (w=nv). The number of banks n must be a power of 2.
+ * Bank striping occurs along the lowest-order bits, with the LSB written to grouped address 0 going to BRAM 0.
+ *
+ * enableGrouped(Bool en)       Switches the block RAM ports to grouped mode (True) or individual (False)
+ * grouped                      Grouped groupDataT access
+ * individual[i]                Individual access to the n banks of dataT
+ *
+ * NOTE: enableGrouped and the register it sets may have very high fanout; recommend a multicycle path since
+ *          switches from grouped to individual ought to be rare.
  *
  *  w       Group-side bit width
  *  n       Number of banks to group
@@ -207,12 +205,12 @@ endmodule
  *                              32b words:    0x89ABCDEF          0x01234567
  *                              64b word:     0x0123456789ABCDEF
  *
- * So if the n-bit word is sourced from a little-endian machine, then the order of v-bit subwords is in _descending_ order of memory
- * address, which is probably not what is wanted.
+ * CAPI transfers cache lines as two 512b big-endian words.
+ * Reading uint8_t* p yields p[0] in the MSB, p[63] in LSB when bwad=0, p[64] in MSB and p[127] in LSB of bwad=1.
  *
- * The CAPI world works in increments of big-endian 512b half-lines. In this instance where the transfer granularity is less than
- * 512b, then an endian swap on the 512b word will sort out both the subword order, and the subword endianness.
- *
+ * When working with n words per half-line, it makes sense to do an endian swap at the half-line level (before input to this module)
+ * so that arrays are in correct order (x[0] in Vector#(n,t) <-> low-address element) and host word interpretation (LE) is
+ * accounted for.
  */
 
 

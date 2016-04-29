@@ -49,6 +49,9 @@ interface BlockMapAFU#(type inputT,type outputT);
     interface Server#(inputT,outputT)               stream;
     interface Server#(MMIORWRequest,Bit#(64))       mmio;
 
+    method Action                                   istreamDone;
+    method Action                                   ostreamDone;
+
     method Bool                                     done;
 endinterface
 
@@ -117,6 +120,23 @@ module [ModuleContext#(ctxT)] mkBlockMapAFU#(Integer nReadBuf,Integer nWriteBuf,
     Reg#(Status) st <- mkReg(Resetting);
     Wire#(AFUReturn) ret <- mkWire;
 
+    // FSMs to notify the block mapper when its read/write streams finish
+    // NOTE: can only start these once the transfers are started, otherwise it will notify immediately because .done will be True)
+
+    FIFOF#(void) istreamRunning <- mkGFIFOF1(True,False), ostreamRunning <- mkGFIFOF1(True,False);
+
+    rule notifyIStreamDone if (istream.done);
+        istreamRunning.deq;
+        blockMapper.istreamDone;
+        $display($time," INFO: Read stream complete and signaled to BlockMapAFU");
+    endrule
+
+    rule notifyOStreamDone if (ostream.done);
+        ostreamRunning.deq;
+        blockMapper.ostreamDone;
+        $display($time," INFO: Write stream complete and signaled to BlockMapAFU");
+    endrule
+
     //  Master state machine
     Stmt masterstmt = seq
         action
@@ -138,6 +158,7 @@ module [ModuleContext#(ctxT)] mkBlockMapAFU#(Integer nReadBuf,Integer nWriteBuf,
             st <= Waiting;
         endaction
 
+
         action
             st <= Running;
             await(pwStart);
@@ -149,14 +170,11 @@ module [ModuleContext#(ctxT)] mkBlockMapAFU#(Integer nReadBuf,Integer nWriteBuf,
         repeat(2) noAction;
 
         action
-            await(istream.done);
-            $display($time," INFO: Read stream complete");
+            istreamRunning.enq(?);
+            ostreamRunning.enq(?);
         endaction
 
-        action
-            await(ostream.done);
-            $display($time," INFO: Write stream complete");
-        endaction
+        await(blockMapper.done && istream.done && ostream.done);
 
         st <= Done;
 
@@ -165,6 +183,8 @@ module [ModuleContext#(ctxT)] mkBlockMapAFU#(Integer nReadBuf,Integer nWriteBuf,
     endseq;
 
     let masterfsm <- mkFSM(masterstmt);
+
+
 
     rule sendInput;
         let id = idata.first;

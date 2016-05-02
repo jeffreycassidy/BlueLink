@@ -59,17 +59,21 @@ SET(BLUESPEC_BSC_SIM_OPTIONS "" CACHE STRING "Additional simulation switches not
 SET(BLUESPEC_BSC_VERILOG_OPTIONS "-opt-undetermined-vals -unspecified-to X" CACHE STRING "Additional Verilog switches not listed above")
 
 SET(BLUESPEC_BLUESIM_LIBRARY_DIRS "" CACHE STRING "Additional -L paths when compiling bsc -sim")
+SET(BLUESPEC_LICENSE_WARNING "30" CACHE STRING "")
 
 
 MARK_AS_ADVANCED(
 	BLUESPEC_BSC_OPTIONS
 	BLUESPEC_BSC_SIM_OPTIONS
 	BLUESPEC_VERILOG_OPTIONS
+    BLUESPEC_LICENSE_WARNING
 )
 
 IF(BLUESPEC_BSC_AGGRESSIVE_CONDITIONS)
 	LIST (APPEND BLUESPEC_BSC_OPTIONS "-aggressive-conditions")
 ENDIF()
+
+LIST(APPEND BLUESPEC_BSC_OPTIONS -licenseWarning ${BLUESPEC_LICENSE_WARNING})
 
 IF(BLUESPEC_BSC_ASSERTIONS)
 	LIST(APPEND BLUESPEC_BSC_OPTIONS "-check-assert")
@@ -132,14 +136,12 @@ FUNCTION(ADD_BSV_TESTBENCH PACKAGE)
 ENDFUNCTION()
 
 ## Adds a testcase from a previously-added testbench package
-## 		Compiles mkTB_${TESTCASE} from package ${PACKAGE}, producing output file test_${TESTCASE}
+## 		Compiles ${TESTCASE} from package ${PACKAGE}, producing output file test_${TESTCASE}
 ## Any additional args are interpreted as -l <lib>
 FUNCTION(ADD_BLUESIM_TESTCASE PACKAGE TESTCASE)
 
     # Create the target
 	ADD_CUSTOM_TARGET(${TESTCASE} DEPENDS ${PACKAGE} ${CMAKE_CURRENT_BINARY_DIR}/test_${TESTCASE})
-
-
 
 
     ## Convert list of additional BDPI libs to string
@@ -150,7 +152,7 @@ FUNCTION(ADD_BLUESIM_TESTCASE PACKAGE TESTCASE)
         ADD_DEPENDENCIES(${TESTCASE} ${BDPI_LIB})
     ENDFOREACH()
 
-#    MESSAGE("BDPI -l args for ${TESTCASE}: ${BDPI_LIB_ARGS}")
+    MESSAGE("BDPI -l args for ${TESTCASE}: ${BDPI_LIB_ARGS}")
 
 
 
@@ -174,8 +176,8 @@ FUNCTION(ADD_BLUESIM_TESTCASE PACKAGE TESTCASE)
 
 	ADD_CUSTOM_COMMAND(
 		OUTPUT test_${TESTCASE}
-		COMMAND ${BLUESPEC_BSC_EXECUTABLE} ${BLUESPEC_BSC_SIM_OPTIONS} -g mkTB_${TESTCASE} -bdir ${BLUESPEC_BSC_BDIR} -p ${BLUESPEC_BSC_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/${PACKAGE}.bsv 
-		COMMAND ${BLUESPEC_BSC_EXECUTABLE} ${BLUESPEC_BSC_SIM_OPTIONS} -e mkTB_${TESTCASE} -bdir ${BLUESPEC_BSC_BDIR} -p ${BLUESPEC_BSC_PATH} ${BDPI_LIB_DIR_ARGS} ${BDPI_LIB_ARGS} -o ${CMAKE_CURRENT_BINARY_DIR}/test_${TESTCASE}
+		COMMAND ${BLUESPEC_BSC_EXECUTABLE} ${BLUESPEC_BSC_SIM_OPTIONS} -g ${TESTCASE} -bdir ${BLUESPEC_BSC_BDIR} -p ${BLUESPEC_BSC_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/${PACKAGE}.bsv 
+		COMMAND ${BLUESPEC_BSC_EXECUTABLE} ${BLUESPEC_BSC_SIM_OPTIONS} -e ${TESTCASE} -bdir ${BLUESPEC_BSC_BDIR} -p ${BLUESPEC_BSC_PATH} ${BDPI_LIB_DIR_ARGS} ${BDPI_LIB_ARGS} -o ${CMAKE_CURRENT_BINARY_DIR}/test_${TESTCASE}
 		DEPENDS ${BLUESPEC_BSC_BDIR}/${PACKAGE}.bo
 		WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 	)
@@ -257,7 +259,7 @@ IF(VSIM_FOUND)
 
         MESSAGE("Args: ${VPIARG}")
 
-        SET(VSIM_ARGS "vsim -t 1ns -L altera_mf_ver -L bsvlibs -L work -L bsvaltera ${VPIARGSTR} ${MODULE}; onfinish exit; force -drive CLK 1'b0, 1'b1 @ 5 -repeat 10; force -drive RST_N 1'b0, 1'b1 @ 10; run -all;")
+        SET(VSIM_ARGS "vsim -t 1ns -L altera_mf_ver -L bsvlibs -L work -L bsvaltera -L bsvalteradsp ${VPIARGSTR} ${MODULE}; onfinish exit; force -drive CLK 1'b0, 1'b1 @ 5 -repeat 10; force -drive RST_N 1'b0, 1'b1 @ 10; run -all;")
 
         ADD_CUSTOM_TARGET(vsimrun_${MODULE}
             COMMAND ${VSIM_VLOG_EXECUTABLE} -timescale 1ns/1ns ${MODULE}.v

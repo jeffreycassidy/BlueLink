@@ -12,7 +12,6 @@ endinterface
 typedef struct {
     Integer bufDepth;       // number of buffer entries
     Integer nParallelTags;  // number of parallel tags to use
-    Bool verbose;           // lots of $display output for debug
 } StreamConfig;
 
 

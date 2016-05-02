@@ -21,10 +21,10 @@ import StmtFSM::*;
 
 import FIFOF::*;
 
-import ProgrammableLUT::*;
+import SynthesisOptions::*;
+import CAPIOptions::*;
 
-import HList::*;
-import ModuleContext::*;
+import BRAMBank::*;
 
 /** Checks block RAM loading using the CAPI interface, using a BlockMapAFU which writes back no output.
  * The expected pattern is a UInt#(64) counter with FF in the top byte and 0..16383 in the lower bytes.
@@ -37,10 +37,7 @@ import ModuleContext::*;
  * Host should provide a BlockMapWED with 64kB source and 0B destination.
  */
 
-module mkBlockRAMAdapter(
-    Tuple2#(
-        BRAMPortGroup#(offsT,Bit#(512),nBanks,dataT),
-        BlockMapAFU#(Bit#(512),Bit#(512))))
+module [ModuleContext#(ctxT)] mkBlockRAMAdapter(BlockMapAFU#(Bit#(512),Bit#(512)))
     provisos (
         Mul#(nbData,nBanks,512),
         NumAlias#(8,nBanks),
@@ -50,10 +47,12 @@ module mkBlockRAMAdapter(
         Add#(nbOffs,nbBank,nbAddr),
         Alias#(UInt#(nbAddr),addrT),
         Alias#(UInt#(nbOffs),offsT),
-        Alias#(UInt#(nbData),dataT)
+        Alias#(UInt#(nbData),dataT),
+        Gettable#(ctxT,SynthesisOptions)
     );
 
-    Bool verbose = False;
+    ctxT ctx                 <- getContext;
+    SynthesisOptions opts   = getIt(ctx);
 
     Integer nWords = valueOf(nBanks)*valueOf(bankDepth);
 
@@ -76,12 +75,9 @@ module mkBlockRAMAdapter(
         for(Integer i=0;i<8;i=i+1)
             g.individual[i].putcmd(False,fromInteger(addr),?);
     endaction;
-    
-    Action deqAll = action
-        for(Integer i=0;i<8;i=i+1)
-            g.individual[i].readdata.deq;
-    endaction;
 
+    let testPWDeqAll <- mkPulseWire;
+    
     // take input and write it in sequence
     Reg#(addrT) ctr <- mkReg(0);
     Reg#(Bool) inputEnable <- mkReg(False);
@@ -108,26 +104,30 @@ module mkBlockRAMAdapter(
     PipeOut#(Bit#(512)) oLine <- mkShiftRegUnfunnel(Right,oWordPack);
     PipeOut#(Bit#(512)) oLineSwapped <- mkFn_to_Pipe(endianSwap, oLine);
 
-    FIFOF#(UInt#(3)) pAccept <- mkFIFOF;
+    Switch#(PipeOut#(UInt#(64)),UInt#(3)) brPortSwitch <- mkSwitch(0,map(portReadPipe,g.individual));
 
-    rule acceptOutput if (outputEnable && oRespCtr < fromInteger(nWords));
+    // removed oRespCtr value check from rule predicate because it caused timing failures on the BRAM mux
+    // if we issue the right number of commands then it will not be an issue, so just check with assertion
+    rule acceptOutput if (outputEnable);
+        dynamicAssert(oRespCtr < fromInteger(nWords),"Overrun on readback copy");
         oRespCtr <= oRespCtr+1;
-        pAccept.enq(truncate(oRespCtr % 8));
-    endrule
 
-    // split from the previous rule because it looks like predicate evaluation on oRespCtr was taking too long
-    // to propagate to the BRAMs (big fanout!). The pAccept FIFO effectively registers the predicate evaluation.
-    rule doAccept;
-        let bk = pAccept.first;
-        pAccept.deq;
+        brPortSwitch.nextCycleSelect(truncate((oRespCtr+1)%8));
 
-        let d = g.individual[bk].readdata.first;
-        g.individual[bk].readdata.deq;
+        let d = brPortSwitch.selected.first;
+        brPortSwitch.selected.deq;
         oWord.enq(d);
 
-        if (verbose)
+        if (opts.showData)
            $display($time," INFO: Readback data %016X",d);
     endrule
+
+    if (!opts.disableCheckCode)
+        (* mutually_exclusive="doDeqAll,brPortSwitch.doDeq,brPortSwitch.doDeq_1,brPortSwitch.doDeq_2,brPortSwitch.doDeq_3,brPortSwitch.doDeq_4,brPortSwitch.doDeq_5,brPortSwitch.doDeq_6,brPortSwitch.doDeq_7" *)
+        rule doDeqAll if (!outputEnable && testPWDeqAll);
+            for(Integer i=0;i<8;i=i+1)
+                g.individual[i].readdata.deq;
+        endrule
 
     Stmt checker = seq
         g.enableGrouped(True);          // delay input to allow multicycle path at group switch
@@ -137,53 +137,72 @@ module mkBlockRAMAdapter(
         // wait until input stream is done
         action
             iDone.deq;
-            $display("Input is done");
+            if (opts.showStatus)
+                $display("Input is done");
         endaction
         inputEnable <= False;
 
         g.enableGrouped(False);
         repeat(3) noAction;             // allow multicycle path at group switch
 
-        $display($time," INFO: Starting readback assertion checks");
-
-        readAll(0);
-        action
-            $display($time,"**** Checking first 8 values ****");
-            for(Integer i=0;i<8;i=i+1)
-            begin
-                $display("Address %08X RAM %02X: %016X",0,i,g.individual[i].readdata.first);
-                dynamicAssert(g.individual[i].readdata.first == (64'hff00000000000000 | fromInteger(i)),"Unexpected read value");
-            end
-        endaction
-        deqAll;
-
-        readAll(1);
-        action
-            $display($time,"**** Checking next 8 values ****");
-            for(Integer i=0;i<8;i=i+1)
-            begin
-                $display("Address %08X RAM %02X: %016X",0,i,g.individual[i].readdata.first);
-                dynamicAssert(g.individual[i].readdata.first == (64'hff00000000000000 | fromInteger(i+8)),"Unexpected read value");
-            end
-        endaction
-        deqAll;
-
-        readAll(2047);
-        action
-            $display($time,"**** Checking last 8 values ****");
-            for(Integer i=0;i<8;i=i+1)
-            begin
-                $display("Address %08X RAM %02X: %016X",0,i,g.individual[i].readdata.first);
-                dynamicAssert(g.individual[i].readdata.first == (64'hff00000000000000 | fromInteger(i+8*2047)),"Unexpected read value");
-            end
-        endaction
-        deqAll;
-
-        $display($time," INFO: Starting readback copy");
+        if (!opts.disableCheckCode)
+        seq
+            $display($time," INFO: Starting readback assertion checks");
+    
+            readAll(0);
+            delay(2);
+            action
+                for(Integer i=0;i<8;i=i+1)
+                    dynamicAssert(g.individual[i].readdata.notEmpty, "Missing readback data!");
+            endaction
+            action
+                $display($time,"**** Checking first 8 values ****");
+                for(Integer i=0;i<8;i=i+1)
+                begin
+                    $display("Address %08X RAM %02X: %016X",0,i,g.individual[i].readdata.first);
+                    dynamicAssert(g.individual[i].readdata.first == (64'hff00000000000000 | fromInteger(i)),"Unexpected read value");
+                end
+            endaction
+            testPWDeqAll.send;
+    
+            readAll(1);
+            delay(2);
+            action
+                for(Integer i=0;i<8;i=i+1)
+                    dynamicAssert(g.individual[i].readdata.notEmpty, "Missing readback data!");
+            endaction
+            action
+                $display($time,"**** Checking next 8 values ****");
+                for(Integer i=0;i<8;i=i+1)
+                begin
+                    $display("Address %08X RAM %02X: %016X",0,i,g.individual[i].readdata.first);
+                    dynamicAssert(g.individual[i].readdata.first == (64'hff00000000000000 | fromInteger(i+8)),"Unexpected read value");
+                end
+            endaction
+            testPWDeqAll.send;
+    
+            readAll(2047);
+            delay(2);
+            action
+                for(Integer i=0;i<8;i=i+1)
+                    dynamicAssert(g.individual[i].readdata.notEmpty, "Missing readback data!");
+            endaction
+            action
+                $display($time,"**** Checking last 8 values ****");
+                for(Integer i=0;i<8;i=i+1)
+                begin
+                    $display("Address %08X RAM %02X: %016X",0,i,g.individual[i].readdata.first);
+                    dynamicAssert(g.individual[i].readdata.first == (64'hff00000000000000 | fromInteger(i+8*2047)),"Unexpected read value");
+                end
+            endaction
+            testPWDeqAll.send;
+    
+            $display($time," INFO: Starting readback copy");
+        endseq
 
         outputEnable <= True;
 
-        await(oRespCtr == fromInteger(nWords) && !pAccept.notEmpty);
+        await(oRespCtr == fromInteger(nWords));
 
         // NOTE: Outer loop will still wait for ostream to finish before terminating the AFU & possibly causing a reset
     endseq;
@@ -194,47 +213,65 @@ module mkBlockRAMAdapter(
         checkerFSM.start;
     endrule
 
-    return tuple2(
-    g,
-    interface BlockMapAFU;
-        interface Server stream;
-            interface Put request = toPut(iFifo);
-            interface Get response = toGet(oLineSwapped);
-        endinterface
-    
-        interface Server mmio;
-            interface Put request;
-                method Action put(MMIORWRequest req);
-                    mmResp.enq(64'h0);
-                endmethod
-            endinterface
-    
-            interface Get response = toGet(mmResp);
-        endinterface
-
-        method Bool done = checkerFSM.done;
-        method Action istreamDone = iDone.enq(?);
-        method Action ostreamDone = oDone.enq(?);
+    interface Server stream;
+        interface Put request = toPut(iFifo);
+        interface Get response = toGet(oLineSwapped);
     endinterface
-    );
+    
+    interface Server mmio;
+        interface Put request;
+            method Action put(MMIORWRequest req);
+                mmResp.enq(64'h0);
+            endmethod
+        endinterface
+    
+        interface Get response = toGet(mmResp);
+    endinterface
 
+    method Bool done = checkerFSM.done;
+    method Action istreamDone = iDone.enq(?);
+    method Action ostreamDone = oDone.enq(?);
 endmodule
 
+// Basic hierarchy, still with context
+module [ModuleContext#(ctxT)] mkBRAMGroupCAPIBase(AFUHardware#(2))
+    provisos (
+        Gettable#(ctxT,CAPIOptions),
+        Gettable#(ctxT,SynthesisOptions));
+    let testAFU <- mkBlockRAMAdapter;
 
-
-(*clock_prefix="ha_pclock"*)
-module [Module] mkBRAMGroupCAPI(AFUHardware#(2));
-
-    let syn = hCons(MemSynthesisStrategy'(AlteraStratixV),hNil);
-
-    let { brg, testAFU } <- mkBlockRAMAdapter;
-
-    let { ctx2, dut } <- runWithContext(syn, mkBlockMapAFU(16,8,testAFU));
+    let dut <- mkBlockMapAFU(16,8,testAFU);
     let afu <- mkDedicatedAFU(dut);
-
 
     AFUHardware#(2) hw <- mkCAPIHardwareWrapper(afuParityWrapper(afu));
     return hw;
 endmodule
+
+(*clock_prefix="ha_pclock"*)
+module [Module] mkBRAMGroupCAPI(AFUHardware#(2));
+    SynthesisOptions opts = defaultValue;
+    CAPIOptions capiopts = defaultValue;
+
+    let { ctx, _w } <- runWithContext(hCons(opts,hCons(capiopts,hNil)),mkBRAMGroupCAPIBase);
+    return _w;
+endmodule
+
+(*clock_prefix="ha_pclock"*)
+module [Module] mkBRAMGroupCAPI_hw(AFUHardware#(2));
+    SynthesisOptions opts = defaultValue;
+    opts.disableCheckCode=True;
+
+    CAPIOptions capiopts = defaultValue;
+
+    let syn = hCons(
+        opts,hCons(
+        capiopts,
+        hNil));
+
+    let { ctx, _w } <- runWithContext(syn,mkBRAMGroupCAPIBase);
+    return _w;
+endmodule
+
+
 
 endpackage

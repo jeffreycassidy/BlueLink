@@ -4,8 +4,9 @@ import GetPut::*;
 import List::*;
 import Assert::*;
 import Cntrs::*;
-import HList::*;
 import ProgrammableLUT::*;
+
+import SynthesisOptions::*;
 
 interface Resource;
     method Action   unlock;
@@ -136,10 +137,11 @@ interface ResourceManagerSF#(type resID);
 endinterface
 
 
-module mkResourceManagerFIFO#(Integer n,Bool bypass)(ResourceManagerSF#(UInt#(ni)))
+module [ModuleContext#(ctxT)] mkResourceManagerFIFO#(Integer n,Bool bypass)(ResourceManagerSF#(UInt#(ni)))
     provisos (
         Alias#(resID,UInt#(ni)),
-        NumAlias#(ni,6)
+        NumAlias#(ni,6),
+        Gettable#(ctxT,SynthesisOptions)
     );
     Count#(UInt#(ni)) rdPtr <- mkCount(0);
     Count#(UInt#(ni)) wrPtr <- mkCount(0);
@@ -158,9 +160,7 @@ module mkResourceManagerFIFO#(Integer n,Bool bypass)(ResourceManagerSF#(UInt#(ni
 
     let pwGrant <- mkPulseWire, pwNextFromFIFO <- mkPulseWire;
 
-    let syn = hCons(AlteraStratixV,hNil);
-
-    Lookup#(ni,UInt#(ni)) lut <- mkZeroLatencyLookup(syn,n);
+    Lookup#(ni,UInt#(ni)) lut <- mkZeroLatencyLookup(n);
 
     RWire#(UInt#(ni)) unlockTag <- mkRWire;
 

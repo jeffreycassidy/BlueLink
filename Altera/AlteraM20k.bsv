@@ -2,7 +2,6 @@ package AlteraM20k;
 
 import BRAMStall::*;
 
-
 /** Create a dual-port unguarded BRAM with stall capability
  * This shouldn't be used in user code - use the wrapped version below.
  */

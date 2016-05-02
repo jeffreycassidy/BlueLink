@@ -73,9 +73,9 @@ private:
 	public:
 		Stimulus(MemScanChainTest* t);
 		void nextRequest();
+		void deq();
 
 	private:
-		virtual void implementDeq() override;
 		Request<Address,Data>		m_current;
 	};
 
@@ -195,7 +195,7 @@ void MemScanChainTest::Stimulus::nextRequest()
 
 }
 
-void MemScanChainTest::Stimulus::implementDeq()
+void MemScanChainTest::Stimulus::deq()
 {
 	// log to the history vector
 	device()->m_history.emplace_back(device()->timebase(),m_current);

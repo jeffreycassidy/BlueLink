@@ -10,8 +10,7 @@ import HList::*;
 import Assert::*;
 import DReg::*;
 
-import HList::*;
-import ModuleContext::*;
+import SynthesisOptions::*;
 
 /** Streams bytes from host memory, yielding a stream of 512b half-lines in ascending memory order.
  *
@@ -24,7 +23,7 @@ module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClient
         StreamCtrl,
         GetS#(t)))
     provisos (
-        Gettable#(ctxT,MemSynthesisStrategy),
+        Gettable#(ctxT,SynthesisOptions),
         NumAlias#(nbs,8),       // Bits for slot index
         NumAlias#(nbc,1),       // Bits for chunk counter
         NumAlias#(nbCount,32),  // lots of cache lines
@@ -32,6 +31,9 @@ module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClient
         Bits#(t,512),           // TODO: Make proviso more general on transfer type
         Add#(nbs,nbc,nblut)     // Bits for lut index (slot+chunk)
     );
+    
+    ctxT ctx <- getContext;
+    SynthesisOptions opts = getIt(ctx);
 
     staticAssert(cfg.bufDepth <= 2**valueOf(nbs),"Buffer depth exceeds address counter addressable width");
 
@@ -56,7 +58,7 @@ module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClient
 
     //      Complete will be False if a request has been issued and completed
     List#(SetReset)                     bufSlotComplete     <- List::replicateM(cfg.bufDepth,mkConflictFreeSetReset(False));
-    Lookup#(nblut,t)                    bufData             <- mkZeroLatencyLookupCtx(cfg.bufDepth * 2**valueOf(nbc));
+    Lookup#(nblut,t)                    bufData             <- mkZeroLatencyLookup(cfg.bufDepth * 2**valueOf(nbc));
 
     Bool isFull             = issuePtr == outputPtr && bufSlotAllocated[outputPtr];
     Bool outputAvailable    = bufSlotComplete[outputPtr];
@@ -79,11 +81,13 @@ module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClient
 
         if (clRemaining == 1)
         begin
-            $display($time," INFO: Last read issued");
+            if (opts.showStatus)
+                $display($time," INFO: Last read issued");
             clCommandsDone[0] <= True;
         end
 
-        $display($time," INFO: Issued read for address %016X using tag %02X",toEffectiveAddress(clAddress),tag);
+        if (opts.showData)
+            $display($time," INFO: Issued read for address %016X using tag %02X",toEffectiveAddress(clAddress),tag);
 
         bufSlotAllocated[issuePtr].set;
         bufSlotComplete[issuePtr].rst;
@@ -104,7 +108,7 @@ module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClient
         if(resp.response != Done)
             $display($time," ERROR: Slot %02X fault response received but not handled ",slot,fshow(resp));
 
-        if(cfg.verbose)
+        if(opts.showData)
             $display($time," INFO: Completed read tag %02X (slot %02X)",resp.rtag,slot);
 
         tagsInFlight.decr(1);

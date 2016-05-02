@@ -25,8 +25,7 @@ import ConfigReg::*;
 import CmdTagManager::*;
 
 import ProgrammableLUT::*;
-import HList::*;
-import ModuleContext::*;
+import SynthesisOptions::*;
 
 typedef struct {
     Integer     nReadTags;
@@ -49,7 +48,7 @@ typedef enum { Resetting, Ready, Waiting, Running, Done } Status deriving (Eq,FS
 
 module [ModuleContext#(ctxT)] mkMemcopyStreamBase#(Config cfg)(DedicatedAFU#(2))
     provisos (
-        Gettable#(ctxT,MemSynthesisStrategy));
+        Gettable#(ctxT,SynthesisOptions));
 
     // WED
     Vector#(2,Reg#(Bit#(512))) wedSegs <- replicateM(mkConfigReg(0));
@@ -67,7 +66,6 @@ module [ModuleContext#(ctxT)] mkMemcopyStreamBase#(Config cfg)(DedicatedAFU#(2))
     StreamCtrl istream;
     { istream, idata } <- mkReadStream(
         StreamConfig {
-            verbose: cfg.verbose,
             bufDepth: cfg.nReadBuf,
             nParallelTags: cfg.nReadTags },
         client[1]);
@@ -80,7 +78,6 @@ module [ModuleContext#(ctxT)] mkMemcopyStreamBase#(Config cfg)(DedicatedAFU#(2))
     StreamCtrl ostream;
     { ostream, odata } <- mkWriteStream(
         StreamConfig {
-            verbose: cfg.verbose,
             nParallelTags: cfg.nWriteTags,
             bufDepth: cfg.nWriteBuf
         },
@@ -204,6 +201,7 @@ endmodule
 
 (*clock_prefix="ha_pclock"*)
 module [Module] mkMemcopyStreamAFU(AFUHardware#(2));
+    SynthesisOptions syn = defaultValue;
 
     Config cfg = Config {
         verboseData: False,
@@ -214,7 +212,7 @@ module [Module] mkMemcopyStreamAFU(AFUHardware#(2));
         nWriteTags: 32};
 
     let { ctx, dut } <- runWithContext(
-        hCons(MemSynthesisStrategy'(AlteraStratixV),hNil),
+        hCons(syn,hNil),
         mkMemcopyStreamBase(cfg)
     );
 
@@ -229,6 +227,7 @@ endmodule
 
 (*clock_prefix="ha_pclock"*)
 module [Module] mkMemcopyNarrowStreamAFU(AFUHardware#(2));
+    SynthesisOptions syn = defaultValue;
 
     Config cfg = Config {
         verbose: True,
@@ -239,7 +238,7 @@ module [Module] mkMemcopyNarrowStreamAFU(AFUHardware#(2));
         nWriteTags: 2};
 
     let { ctx, dut } <- runWithContext(
-        hCons(MemSynthesisStrategy'(AlteraStratixV),hNil),
+        hCons(syn,hNil),
         mkMemcopyStreamBase(cfg)
     );
 

@@ -8,13 +8,8 @@ import HList::*;
 import Vector::*;
 import ConfigReg::*;
 import RevertingVirtualReg::*;
-import ModuleContext::*;
 
-typedef union tagged {
-    void BSVBehavioral;
-    void AlteraStratixV;
-} MemSynthesisStrategy deriving(Eq);
-
+import SynthesisOptions::*;
 
 
 /** Writeable LUT with zero-latency lookup
@@ -62,30 +57,19 @@ import "BVI" MLAB_0l = module mkAlteraStratixVMLAB_0l#(Integer depth)(Lookup#(na
     schedule lookup CF write;
 endmodule
 
-module [ModuleContext#(ctxT)] mkZeroLatencyLookupCtx#(Integer depth)(Lookup#(na,t))
+module [ModuleContext#(ctxT)] mkZeroLatencyLookup#(Integer depth)(Lookup#(na,t))
     provisos (
         Bits#(t,nd),
-        Gettable#(ctxT,MemSynthesisStrategy));
+        Gettable#(ctxT,SynthesisOptions));
 
     ctxT ctx <- getContext;
-    MemSynthesisStrategy syn = getIt(ctx);
-    let _m <- mkZeroLatencyLookup(hCons(syn,hNil),depth);
-    return _m;
-
-endmodule
-
-module mkZeroLatencyLookup#(opts_t synOpts,Integer depth)(Lookup#(na,t))
-    provisos (
-        Bits#(t,nd),
-        Gettable#(opts_t,MemSynthesisStrategy));
-
-    MemSynthesisStrategy memSyn = getIt(synOpts);
+    SynthesisOptions opts = getIt(ctx);
 
     staticAssert(depth <= valueOf(TExp#(na)),"Insufficient address port width specified for requested depth");
 
     Lookup#(na,t) _w;
 
-    case (memSyn) matches
+    case (opts.mem) matches
         AlteraStratixV:
         begin
             messageM("Instantiating an Altera MLAB-based LUT");
@@ -132,14 +116,17 @@ endmodule
 
 typedef function ActionValue#(t) f(UInt#(na) addr) ReadPort#(numeric type na,type t);
 
-module mkMultiReadZeroLatencyLookup#(opts_t opts,Integer nread,Integer depth)(MultiReadLookup#(na,t))
+module [ModuleContext#(ctxT)] mkMultiReadZeroLatencyLookup#(Integer nread,Integer depth)(MultiReadLookup#(na,t))
     provisos (
-        Gettable#(opts_t,MemSynthesisStrategy),
+        Gettable#(ctxT,SynthesisOptions),
         Bits#(t,nd));
+
+    ctxT ctx <- getContext;
+    SynthesisOptions opts = getIt(ctx);
 
     ReadPort#(na,t) readPort[nread];
 
-    List#(Lookup#(na,t)) luts <- List::replicateM(nread,mkZeroLatencyLookup(opts,depth));
+    List#(Lookup#(na,t)) luts <- List::replicateM(nread,mkZeroLatencyLookup(depth));
 
     for(Integer i=0;i<nread;i=i+1)
         readPort[i] = luts[i].lookup;

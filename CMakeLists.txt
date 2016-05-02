@@ -49,6 +49,8 @@ CONFIGURE_FILE(shim_host.dat.in shim_host.dat)
 CONFIGURE_FILE(pslse.parms.in pslse.parms)
 
 IF(USE_BLUESPEC)
+    ADD_BSV_PACKAGE(CAPIOptions)
+    ADD_BSV_PACKAGE(SynthesisOptions)
     ADD_BSV_PACKAGE(ShiftReg)
 ENDIF()
 

@@ -7,12 +7,11 @@ import SpecialFIFOs::*;
 import ProgrammableLUT::*;
 import DReg::*;
 
-import HList::*;
-
 import AFU::*;
 import ClientServerU::*;
 
 import ResourceManager::*;
+import SynthesisOptions::*;
 
 import Assert::*;
 
@@ -81,14 +80,15 @@ endinterface
  */
 
 
-module mkCmdTagManager#(Integer ntags)(
+module [ModuleContext#(ctxT)] mkCmdTagManager#(Integer ntags)(
         Tuple2#(
             CmdTagManagerUpstream#(brlat),          // upstream AFU-like interface
             CmdTagManagerClientPort#(userDataT)))   // downstream interface presented to client
     provisos (
         NumAlias#(nbtag,8),
         Bits#(userDataT,nbu),
-        Bits#(RequestTag,nbtag));
+        Bits#(RequestTag,nbtag),
+        Gettable#(ctxT,SynthesisOptions));
 
     // OLD-STYLE (uses regs/ALMs to track tag status and allows parallel access to all tag status)
     // tag manager keeps track of which tags are available
@@ -101,8 +101,7 @@ module mkCmdTagManager#(Integer ntags)(
     ResourceManagerSF#(UInt#(6)) tagMgr <- mkResourceManagerFIFO(64,False);
 
     // client data LUT: hold data provided when command is issued and send back to client with buffer reads
-    let syn = hCons(AlteraStratixV,hNil);
-    MultiReadLookup#(nbtag,userDataT) userDataLUT <- mkMultiReadZeroLatencyLookup(syn,3,ntags);
+    MultiReadLookup#(nbtag,userDataT) userDataLUT <- mkMultiReadZeroLatencyLookup(3,ntags);
 
     // passthrough wires
     Wire#(CacheCommand) oCmd <- mkWire;

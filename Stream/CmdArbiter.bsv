@@ -5,10 +5,11 @@ import CmdTagManager::*;
 
 import ClientServerU::*;
 import ProgrammableLUT::*;
-import HList::*;
 import PSLTypes::*;
 import DReg::*;
 import GetPut::*;
+
+import SynthesisOptions::*;
 
 /** Priority arbiter which will always grant to client[i] before client[i+1]. As a result, the issue methods schedule in increasing
  * order of client index. Commands are not registered by this module.
@@ -18,18 +19,17 @@ import GetPut::*;
  *
  */
 
-module mkCmdPriorityArbiter#(CmdTagManagerClientPort#(userDataT) tagMgr)(Vector#(nPorts,CmdTagManagerClientPort#(userDataT)))
+module [ModuleContext#(ctxT)] mkCmdPriorityArbiter#(CmdTagManagerClientPort#(userDataT) tagMgr)(Vector#(nPorts,CmdTagManagerClientPort#(userDataT)))
     provisos (
         Alias#(UInt#(4),clientIndex),
         Bits#(userDataT,nbu),
         Bits#(RequestTag,nbRequestTag),
-        NumAlias#(brlat,2));
+        NumAlias#(brlat,2),
+        Gettable#(ctxT,SynthesisOptions));
 
     Vector#(nPorts,CmdTagManagerClientPort#(userDataT)) clients;
 
-    let syn = hCons(AlteraStratixV,hNil);
-
-    MultiReadLookup#(nbRequestTag,clientIndex) tagClientMap <- mkMultiReadZeroLatencyLookup(syn,3,64);
+    MultiReadLookup#(nbRequestTag,clientIndex) tagClientMap <- mkMultiReadZeroLatencyLookup(3,64);
 
     // client indices for the various input ports
     Reg#(Maybe#(Tuple3#(clientIndex,CacheResponse,userDataT))) cmdResponseClient <- mkDReg(tagged Invalid);

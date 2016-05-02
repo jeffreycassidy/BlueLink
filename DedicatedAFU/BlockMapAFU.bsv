@@ -23,9 +23,8 @@ import Cntrs::*;
 
 import CmdTagManager::*;
 
-import HList::*;
-import ModuleContext::*;
-import ProgrammableLUT::*;
+import SynthesisOptions::*;
+import CAPIOptions::*;
 
 typedef struct {
     LittleEndian#(EAddress64) addrTo;       // destination address/size (bytes)
@@ -52,6 +51,7 @@ interface BlockMapAFU#(type inputT,type outputT);
     method Action                                   istreamDone;
     method Action                                   ostreamDone;
 
+    method Action                                   rst;
     method Bool                                     done;
 endinterface
 
@@ -74,12 +74,14 @@ endinterface
 
 module [ModuleContext#(ctxT)] mkBlockMapAFU#(Integer nReadBuf,Integer nWriteBuf,BlockMapAFU#(Bit#(512),Bit#(512)) blockMapper)(DedicatedAFU#(2))
     provisos (
-        Gettable#(ctxT,MemSynthesisStrategy)
+        Gettable#(ctxT,CAPIOptions),
+        Gettable#(ctxT,SynthesisOptions)
         );
-    Bool verbose=False;
-
     Integer nReadTags = 4;
     Integer nWriteTags = 30;
+
+    ctxT ctx <- getContext;
+    CAPIOptions capi = getIt(ctx);
 
     // WED
     Vector#(2,Reg#(Bit#(512))) wedSegs <- replicateM(mkConfigReg(0));
@@ -97,7 +99,6 @@ module [ModuleContext#(ctxT)] mkBlockMapAFU#(Integer nReadBuf,Integer nWriteBuf,
     StreamCtrl istream;
     { istream, idata } <- mkReadStream(
         StreamConfig {
-            verbose: True,
             bufDepth: nReadBuf,
             nParallelTags: nReadTags },
         client[1]);
@@ -106,7 +107,6 @@ module [ModuleContext#(ctxT)] mkBlockMapAFU#(Integer nReadBuf,Integer nWriteBuf,
     StreamCtrl ostream;
     { ostream, odata } <- mkWriteStream(
         StreamConfig {
-            verbose: True,
             bufDepth: nWriteBuf,
             nParallelTags: nWriteTags },
         client[0]);
@@ -128,13 +128,15 @@ module [ModuleContext#(ctxT)] mkBlockMapAFU#(Integer nReadBuf,Integer nWriteBuf,
     rule notifyIStreamDone if (istream.done);
         istreamRunning.deq;
         blockMapper.istreamDone;
-        $display($time," INFO: Read stream complete and signaled to BlockMapAFU");
+        if (capi.showClientStatus)
+            $display($time," INFO: Read stream complete and signaled to BlockMapAFU");
     endrule
 
     rule notifyOStreamDone if (ostream.done);
         ostreamRunning.deq;
         blockMapper.ostreamDone;
-        $display($time," INFO: Write stream complete and signaled to BlockMapAFU");
+        if(capi.showClientStatus)
+            $display($time," INFO: Write stream complete and signaled to BlockMapAFU");
     endrule
 
     //  Master state machine
@@ -149,12 +151,15 @@ module [ModuleContext#(ctxT)] mkBlockMapAFU#(Integer nReadBuf,Integer nWriteBuf,
 
         action
             await(pwWEDReady);
-            $display($time," INFO: WED read complete");
-            $display($time,"      Dst address: %016X",unpackle(wed.block.addrTo).addr);
-            $display($time,"      OSize:       %016X",unpackle(wed.block.oSize));
-            $display($time,"      Src address: %016X",unpackle(wed.block.addrFrom).addr);
-            $display($time,"      ISize:       %016X",unpackle(wed.block.iSize));
-
+            if (capi.showStatus)
+            begin
+                $display($time," INFO: WED read complete");
+                $display($time,"      Dst address: %016X",unpackle(wed.block.addrTo).addr);
+                $display($time,"      OSize:       %016X",unpackle(wed.block.oSize));
+                $display($time,"      Src address: %016X",unpackle(wed.block.addrFrom).addr);
+                $display($time,"      ISize:       %016X",unpackle(wed.block.iSize));
+            end
+            blockMapper.rst;
             st <= Waiting;
         endaction
 
@@ -164,7 +169,8 @@ module [ModuleContext#(ctxT)] mkBlockMapAFU#(Integer nReadBuf,Integer nWriteBuf,
             await(pwStart);
             istream.start(unpackle(wed.block.addrFrom),unpackle(wed.block.iSize));
             ostream.start(unpackle(wed.block.addrTo),  unpackle(wed.block.oSize));
-            $display($time," INFO: Starting streaming operation");
+            if (capi.showStatus)
+                $display($time," INFO: Starting streaming operation");
         endaction
 
         repeat(2) noAction;
@@ -192,7 +198,7 @@ module [ModuleContext#(ctxT)] mkBlockMapAFU#(Integer nReadBuf,Integer nWriteBuf,
         iCount.incr(1);
         blockMapper.stream.request.put(id);
 
-        if (verbose)
+        if (capi.showClientData)
         begin
             $write($time," INFO: Presenting input data ");
             for(Integer i=7;i>=0;i=i-1)
@@ -213,7 +219,7 @@ module [ModuleContext#(ctxT)] mkBlockMapAFU#(Integer nReadBuf,Integer nWriteBuf,
         odata.put(o);
         oCount.incr(1);
 
-        if (verbose)
+        if (capi.showClientData)
         begin
             $write($time," INFO: Received output data ");
             for(Integer i=7;i>=0;i=i-1)

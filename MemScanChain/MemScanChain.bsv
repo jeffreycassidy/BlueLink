@@ -256,7 +256,7 @@ module mkBRAMGroup#(Vector#(n,BRAMPortStall#(UInt#(nbAddr),dataT)) br)
         return pack(bv);
     endfunction
 
-    // implement individual accesses by gating
+    // implement individual accesses by gating on !enGroup
     Vector#(nBanks,BRAMPortStall#(addrT,dataT)) indiv;
     for(Integer i=0;i<valueOf(nBanks);i=i+1)
         indiv[i] = interface BRAMPortStall;

@@ -19,14 +19,15 @@ import FIFOF::*;
 import ClientServerU::*;
 import MMIO::*;
 
+import SynthesisOptions::*;
 import ProgrammableLUT::*;
+//import HList::*;
 
 import PAClib::*;
 
 import PSLTypes::*;
 
 import Endianness::*;
-import HList::*;
 
 function EAddress64 offset(EAddress64 addr,UInt#(n) o) provisos (Add#(n,__some,64));
     return EAddress64 { addr: addr.addr + extend(o) };
@@ -45,7 +46,10 @@ typedef enum { Resetting, Ready, Waiting, Running, Done } Status deriving (Eq,FS
 typedef 64 NTags;
 
 
-module mkAFU_Memcopy2(DedicatedAFU#(2));
+module [ModuleContext#(ctxT)] mkAFU_Memcopy2(DedicatedAFU#(2))
+    provisos (
+        Gettable#(ctxT,SynthesisOptions));
+
     //// WED reg
     Vector#(2,Reg#(Bit#(512))) wedSegs <- replicateM(mkConfigReg(0));
     WED wed = concatSegReg(wedSegs,LE);
@@ -72,8 +76,8 @@ module mkAFU_Memcopy2(DedicatedAFU#(2));
     Vector#(NTags,Reg#(Bool)) tagReadComplete <- replicateM(mkConfigReg(False));
 
     // Storage
-    Lookup#(8,CacheLineAddress) addrLUT   <- mkZeroLatencyLookup(hCons(AlteraStratixV,hNil),valueOf(NTags));
-    Lookup#(8,Bit#(512))        txbuf     <- mkZeroLatencyLookup(hCons(AlteraStratixV,hNil),valueOf(NTags)*2);
+    Lookup#(8,CacheLineAddress) addrLUT   <- mkZeroLatencyLookup(valueOf(NTags));
+    Lookup#(8,Bit#(512))        txbuf     <- mkZeroLatencyLookup(valueOf(NTags)*2);
 
     // Command/response buffers
     Wire#(CacheResponse)    iRespW <- mkWire;
@@ -316,9 +320,10 @@ module mkAFU_Memcopy2(DedicatedAFU#(2));
 endmodule
 
 (*clock_prefix="ha_pclock"*)
-module mkMemcopy2AFU(AFUHardware#(2));
+module [Module] mkMemcopy2AFU(AFUHardware#(2));
+    SynthesisOptions syn = defaultValue;
 
-    let dut <- mkAFU_Memcopy2;
+    let { ctx, dut } <- runWithContext(hCons(syn,hNil),mkAFU_Memcopy2);
     let afu <- mkDedicatedAFU(dut);
 
     AFUHardware#(2) hw <- mkCAPIHardwareWrapper(afuParityWrapper(afu));

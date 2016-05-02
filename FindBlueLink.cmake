@@ -34,7 +34,7 @@ IF(CAPI_SIM_FOUND)
             COMMAND ${VSIM_VLOG_EXECUTABLE} -work work ${MODNAME}.v
 
         # simulate
-            COMMAND ${VSIM_VSIM_EXECUTABLE} -batch -onfinish exit -logfile transcript -t 1ns -L altera_mf_ver -L bsvlibs -L bsvaltera -L work -do "run -all" -pli ${CAPI_SIM_PLI_DRIVER} ${MODNAME}_pslse_top
+            COMMAND ${VSIM_VSIM_EXECUTABLE} -batch -onfinish exit -logfile transcript -t 1ns -L altera_mf_ver -L bsvalteradsp -L bsvlibs -L bsvaltera -L work -do "run -all" -pli ${CAPI_SIM_PLI_DRIVER} ${MODNAME}_pslse_top
         )
     ENDFUNCTION()
 ENDIF()

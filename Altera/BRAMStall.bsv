@@ -97,4 +97,8 @@ endmodule
 function BRAMPortStall#(a,d) portA(BRAM2PortStall#(a,d) br) = br.porta;
 function BRAMPortStall#(a,d) portB(BRAM2PortStall#(a,d) br) = br.portb;
 
+function PipeOut#(d) portReadPipe(BRAMPortStall#(a,d) brp)  = brp.readdata;
+function PipeOut#(d) portAReadPipe(BRAM2PortStall#(a,d) br) = br.porta.readdata;
+function PipeOut#(d) portBReadPipe(BRAM2PortStall#(a,d) br) = br.portb.readdata;
+
 endpackage

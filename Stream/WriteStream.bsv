@@ -12,8 +12,7 @@ import DReg::*;
 
 import Stream::*;
 
-import HList::*;
-import ModuleContext::*;
+import SynthesisOptions::*;
 
 /** Writes a stream to host memory, consuming 512b half-lines in order.
  *
@@ -28,7 +27,7 @@ module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClien
         StreamCtrl,
         Put#(t)))
     provisos (
-        Gettable#(ctxT,MemSynthesisStrategy),
+        Gettable#(ctxT,SynthesisOptions),
         NumAlias#(nbs,8),       // Bits for slot index
         NumAlias#(nbc,1),       // Bits for chunk counter
         NumAlias#(nbCount,32),  // lots of cache lines
@@ -36,6 +35,9 @@ module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClien
         Bits#(t,512),
         Add#(nbs,nbc,nblut)     // Bits for lut index (slot+chunk)
     );
+
+    ctxT ctx <- getContext;
+    SynthesisOptions opts = getIt(ctx);
 
     staticAssert(cfg.bufDepth <= 2**valueOf(nbs),"Buffer depth exceeds address counter addressable width");
 
@@ -54,7 +56,7 @@ module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClien
 
     // Buffer & buffer status
     List#(SetReset)                     bufSlotUsed <- List::replicateM(cfg.bufDepth,mkConflictFreeSetReset(False));
-    Lookup#(nblut,t)                    bufData <- mkZeroLatencyLookupCtx(cfg.bufDepth * 2**valueOf(nbc));
+    Lookup#(nblut,t)                    bufData <- mkZeroLatencyLookup(cfg.bufDepth * 2**valueOf(nbc));
 
     Bool isEmpty            = issuePtr == writePtr && !bufSlotUsed[writePtr];
     Bool bufSlotAvailable   = !bufSlotUsed[writePtr];
@@ -75,14 +77,16 @@ module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClien
         if (clRemaining == 1)
         begin
             clCommandsDone[0] <= True;
-            $display($time," INFO: Last write issued");
+            if (opts.showStatus)
+                $display($time," INFO: Last write issued");
         end
 
         let tag <- cmdPort.issue(
             CmdWithoutTag { com: Write_na, cabt: Strict, csize: 128, cea: toEffectiveAddress(clAddress) },
             pack(extend(issuePtr)));
 
-        $display($time," INFO: Issued write for address %016X using tag %02X",toEffectiveAddress(clAddress),tag);
+        if (opts.showData)
+            $display($time," INFO: Issued write for address %016X using tag %02X",toEffectiveAddress(clAddress),tag);
     endrule
 
     Reg#(Maybe#(UInt#(nblut))) brReqQ <- mkDReg(tagged Invalid);
@@ -110,7 +114,7 @@ module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClien
         if(resp.response != Done)
             $display($time," ERROR: Slot %02X fault response received but not handled ",slot,fshow(resp));
 
-        if(cfg.verbose)
+        if(opts.showData)
             $display($time," INFO: Completed write tag %02X (slot %02X)",resp.rtag,slot);
 
         tagsInFlight.decr(1);

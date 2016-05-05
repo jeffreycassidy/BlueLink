@@ -50,8 +50,8 @@ module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClien
     Count#(UInt#(nbs)) tagsInFlight <- mkCount(0);
 
     // FIFO
-    Count#(UInt#(nbs)) issuePtr   <- mkModuloCount(cfg.bufDepth,0);     // next slot to issue write command
-    Count#(UInt#(nbs)) writePtr   <- mkModuloCount(cfg.bufDepth,0);     // next slot to be written to at input
+    UnitUpDnCount#(UInt#(nbs)) issuePtr   <- mkUnitUpDnModuloCount(cfg.bufDepth,0);     // next slot to issue write command
+    UnitUpDnCount#(UInt#(nbs)) writePtr   <- mkUnitUpDnModuloCount(cfg.bufDepth,0);     // next slot to be written to at input
     Count#(UInt#(nbc)) writeChunk <- mkCount(0);
 
     // Buffer & buffer status
@@ -69,7 +69,7 @@ module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClien
             && !clCommandsDone[0]
             && tagsInFlight < fromInteger(cfg.nParallelTags));
 
-        issuePtr.incr(1);
+        issuePtr.incr;
         clAddress.incr(1);
         clRemaining.decr(1);
         tagsInFlight.incr(1);
@@ -147,7 +147,7 @@ module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClien
         method Action put(t iData) if (bufSlotAvailable);
             if (writeChunk == fromInteger(nChunksPerTransfer-1))        // last chunk of this input
             begin
-                writePtr.incr(1);
+                writePtr.incr;
                 bufSlotUsed[writePtr].set;
                 writeChunk <= 0;
             end

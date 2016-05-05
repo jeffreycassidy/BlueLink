@@ -45,8 +45,8 @@ module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClient
     Count#(UInt#(nbs))                  tagsInFlight <- mkCount(0);
 
     // FIFO
-    Count#(UInt#(nbs)) issuePtr  <- mkModuloCount(cfg.bufDepth,0);     // next slot to issue
-    Count#(UInt#(nbs)) outputPtr <- mkModuloCount(cfg.bufDepth,0);     // next slot to be read
+    UnitUpDnCount#(UInt#(nbs)) issuePtr  <- mkUnitUpDnModuloCount(cfg.bufDepth,0);     // next slot to issue
+    UnitUpDnCount#(UInt#(nbs)) outputPtr <- mkUnitUpDnModuloCount(cfg.bufDepth,0);     // next slot to be read
 
 
     // Output chunking
@@ -70,7 +70,7 @@ module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClient
             && !clCommandsDone[0]
             && tagsInFlight < fromInteger(cfg.nParallelTags));
 
-        issuePtr.incr(1);
+        issuePtr.incr;
         clAddress.incr(1);
         clRemaining.decr(1);
         tagsInFlight.incr(1);
@@ -158,7 +158,7 @@ module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClient
         method Action deq if (outputAvailable);
             if (outputChunk == fromInteger(nChunksPerTransfer-1))        // last chunk of this output
             begin
-                outputPtr.incr(1);
+                outputPtr.incr;
                 bufSlotAllocated[outputPtr].rst;
                 bufSlotComplete[outputPtr].rst;
                 outputChunk <= 0;

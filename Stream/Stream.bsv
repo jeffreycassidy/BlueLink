@@ -73,6 +73,8 @@ function Action clearStatus(BufStatusIfc r) = r.clear;
 
 // Slight variation on mkCount(t init), in which the modulus is compile-time variable
 // mkCount rolls over at maxValue#(t), whereas this may roll over sooner
+//
+// NOTE: Synthesis results disappointing, seems to instantiate a modulo hardware unit in Verilog?
 
 module mkModuloCount#(Integer m,t init)(Count#(t))
     provisos (
@@ -83,6 +85,9 @@ module mkModuloCount#(Integer m,t init)(Count#(t))
     Reg#(t) ctr[3] <- mkCReg(3,init);
 
     rule doIncrDecr;
+        t next = ctr[1] + incrVal - decrVal;
+
+//          this seems to be brutally slow - instantiates a specific modulo unit in Verilog
         ctr[1] <= (ctr[1] + incrVal - decrVal) % fromInteger(m);
     endrule
 
@@ -92,6 +97,49 @@ module mkModuloCount#(Integer m,t init)(Count#(t))
     method Action incr(t val) = incrVal._write(val);
     method Action decr(t val) = decrVal._write(val);
     method Action _write(t val) = ctr[2]._write(val);
+endmodule
+
+
+
+
+// read, update, (incr,decr), (write, clear)
+
+interface UnitUpDnCount#(type t);
+    method Action incr;
+    method Action decr;
+    method Action clear;
+
+    method t _read;
+    method Action update(t val);
+    method Action _write(t val);
+endinterface
+
+module mkUnitUpDnModuloCount#(Integer m,t init)(UnitUpDnCount#(t))
+    provisos (
+        Arith#(t),
+        Bits#(t,n),
+        Eq#(t));
+
+    Reg#(t) ctr[3] <- mkCReg(3,init);
+    let pwIncr <- mkPulseWire, pwDecr <- mkPulseWire;
+
+    rule doIncr if (pwIncr && !pwDecr);
+        ctr[1] <= ctr[1] == fromInteger(m-1) ? 0 : ctr[1]+1;
+    endrule
+
+    rule doDecr if (pwDecr && !pwIncr);
+        ctr[1] <= ctr[1] == 0 ? fromInteger(m-1) : ctr[1]-1;
+    endrule
+
+    method t _read = ctr[0];
+    method Action update(t val) = ctr[0]._write(val);
+
+    method Action incr = pwIncr.send;
+    method Action decr = pwDecr.send;
+
+    method Action _write(t val) = ctr[2]._write(init);
+
+    method Action clear = ctr[2]._write(init);
 endmodule
 
 

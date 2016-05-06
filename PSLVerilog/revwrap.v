@@ -17,9 +17,7 @@
  * 
  */
 
-`define WRAPMODULENAME(name) ``name``_wrapper
-
-module `WRAPMODULENAME(`MODULENAME) (
+module psl_accel (
 	input  [   0:   5]  ha_brad,
 	output ah_cvalid,
 	input  [   0:   7]  ha_brtag,
@@ -39,6 +37,7 @@ module `WRAPMODULENAME(`MODULENAME) (
 	output [   0:   7]  ah_ctag,
 	output ah_ctagpar,
 	output [   0:  12]  ah_com,
+	output [   0:   2]  ah_cpad,
 	output ah_compar,
 	output [   0:   2]  ah_cabt,
 	output [   0:  63]  ah_cea,

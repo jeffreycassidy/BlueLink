@@ -31,6 +31,18 @@ typedef union tagged {
     struct { UInt#(24) index; } DWordRead;
 } MMIORWRequest deriving(Bits,Eq);
 
+function Bool isMMIOWrite(MMIORWRequest req) = case (req) matches
+    tagged DWordWrite .*: True;
+    tagged WordWrite .*: True;
+    default: False;
+endcase;
+
+function Bool isMMIORead(MMIORWRequest req) = case (req) matches
+    tagged DWordRead .*: True;
+    tagged WordRead .*: True;
+    default: False;
+endcase;
+
 instance FShow#(MMIORWRequest);
     function Fmt fshow(MMIORWRequest r) = case (r) matches
         tagged DWordWrite   { index: .dwi, data: .dwd}: $format("MMIO write to dword  index %06X, value %016X",dwi,dwd);

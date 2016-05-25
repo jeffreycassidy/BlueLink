@@ -11,7 +11,6 @@ ENDIF()
 
 
 ## Create the CMake package config file
-#INCLUDE(FindBlueLink.cmake)
 CONFIGURE_FILE(BlueLinkConfig.cmake.in BlueLinkConfig.cmake)
 
 SET(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)

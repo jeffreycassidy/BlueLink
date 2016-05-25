@@ -60,6 +60,16 @@ public:
 	boost::iterator_range<typename input_vector::iterator> 			input() { return m_packedInput; }
 	boost::iterator_range<typename input_vector::const_iterator> 	input() const { return m_packedInput; }
 
+	void input(
+			std::vector<
+				typename TestFixture::input_container_type,
+				boost::alignment::aligned_allocator<
+					typename TestFixture::input_container_type,
+					128>>&& v)
+	{
+		m_packedInput = std::move(v);
+	}
+
 	TestFixture fixture;
 
 private:
@@ -95,8 +105,6 @@ template<class TestFixture>bool BlockMapAFU<TestFixture>::check()
 	fixture.checker.clear();
 	cout << "Checking output" << endl;
 
-
-
 	for(unsigned i=0;i<m_packedInput.size();++i)
 	{
 		Unpacker<typename TestFixture::input_container_type>  Ui(TestFixture::input_bits,m_packedInput[i]);
@@ -108,7 +116,7 @@ template<class TestFixture>bool BlockMapAFU<TestFixture>::check()
 		Ui & in;
 		Uo & out;
 
-		bool ok = fixture.checker(fixture.convertToNativeType(in),fixture.convertToNativeType(out));
+		bool ok = fixture.checker.check(fixture.convertToNativeType(in),fixture.convertToNativeType(out));
 		errCt += !ok;
 		if (!ok && errCt <= m_maxErrorsToPrint)
 			cout << "  (at sample " << i << ")" << endl;

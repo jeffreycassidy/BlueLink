@@ -1,6 +1,7 @@
 package ReadStream;
 
 import Stream::*;
+import CreditIfc::*;
 import PSLTypes::*;
 import CmdTagManager::*;
 import Cntrs::*;
@@ -42,7 +43,10 @@ module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClient
     Count#(CacheLineAddress)            clAddress   <- mkCount(0);
     Reg#(Bool)                          clCommandsDone[2] <- mkCReg(2,True);
 
-    Count#(UInt#(nbs))                  tagsInFlight <- mkCount(0);
+    CreditManager#(UInt#(8)) tagCreditMgr <- mkCreditManager(CreditConfig {
+        initCredits: cfg.nParallelTags,
+        maxCredits: cfg.nParallelTags,
+        bypass: False });
 
     // FIFO
     UnitUpDnCount#(UInt#(nbs)) issuePtr  <- mkUnitUpDnModuloCount(cfg.bufDepth,0);     // next slot to issue
@@ -67,13 +71,13 @@ module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClient
 
     // issue read commands as long as we have free tags and buffer slots
     rule issueRead if (!isFull
-            && !clCommandsDone[0]
-            && tagsInFlight < fromInteger(cfg.nParallelTags));
+            && !clCommandsDone[0]);
 
         issuePtr.incr;
         clAddress.incr(1);
         clRemaining.decr(1);
-        tagsInFlight.incr(1);
+
+        tagCreditMgr.take;          // implicit condition: credit available
 
         let tag <- cmdPort.issue(
             CmdWithoutTag { com: Read_cl_na, cabt: Strict, csize: 128, cea: toEffectiveAddress(clAddress) },
@@ -111,7 +115,7 @@ module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClient
         if(opts.showData)
             $display($time," INFO: Completed read tag %02X (slot %02X)",resp.rtag,slot);
 
-        tagsInFlight.decr(1);
+        tagCreditMgr.give;
             
         bufSlotComplete[slot].set;
     endrule
@@ -137,7 +141,7 @@ module [ModuleContext#(ctxT)] mkReadStream#(StreamConfig cfg,CmdTagManagerClient
             issuePtr  <= 0;
             outputPtr <= 0;
 
-            tagsInFlight <= 0;
+            tagCreditMgr.clear;
 
             for(Integer i=0;i<cfg.bufDepth;i=i+1)
             begin

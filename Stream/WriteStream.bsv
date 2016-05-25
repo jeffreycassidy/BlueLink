@@ -1,6 +1,7 @@
 package WriteStream;
 
 import PSLTypes::*;
+import CreditIfc::*;
 import CmdTagManager::*;
 import Cntrs::*;
 import ProgrammableLUT::*;
@@ -47,7 +48,10 @@ module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClien
     Reg#(Bool)                          clCommandsDone[2] <- mkCReg(2,False);
 
     // Tag counters
-    Count#(UInt#(nbs)) tagsInFlight <- mkCount(0);
+    CreditManager#(UInt#(8)) tagCreditMgr <- mkCreditManager(CreditConfig {
+        initCredits: cfg.nParallelTags,
+        maxCredits: cfg.nParallelTags,
+        bypass: False });
 
     // FIFO
     UnitUpDnCount#(UInt#(nbs)) issuePtr   <- mkUnitUpDnModuloCount(cfg.bufDepth,0);     // next slot to issue write command
@@ -66,13 +70,13 @@ module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClien
     // issue write commands as long as we have free tags and buffer slots
     rule issueWrite if (issuePtr != writePtr
             && bufSlotUsed[issuePtr]
-            && !clCommandsDone[0]
-            && tagsInFlight < fromInteger(cfg.nParallelTags));
+            && !clCommandsDone[0]);
 
         issuePtr.incr;
         clAddress.incr(1);
         clRemaining.decr(1);
-        tagsInFlight.incr(1);
+
+        tagCreditMgr.take;
 
         if (clRemaining == 1)
         begin
@@ -117,7 +121,7 @@ module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClien
         if(opts.showData)
             $display($time," INFO: Completed write tag %02X (slot %02X)",resp.rtag,slot);
 
-        tagsInFlight.decr(1);
+        tagCreditMgr.give;
             
         bufSlotUsed[slot].rst;
     endrule
@@ -135,7 +139,7 @@ module [ModuleContext#(ctxT)] mkWriteStream#(StreamConfig cfg,CmdTagManagerClien
             for(Integer i=0;i<cfg.bufDepth;i=i+1)
                 bufSlotUsed[i].rst;
 
-            tagsInFlight <= 0;
+            tagCreditMgr.clear;
         endmethod
 
         method Action abort = dynamicAssert(False,"mkWriteStream: abort method is not supported");

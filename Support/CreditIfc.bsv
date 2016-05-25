@@ -60,7 +60,7 @@ module mkCreditManager#(CreditConfig cfg)(CreditManager#(ctrT))
 	endmethod
 
 	method ctrT count = credits;
-	method Action clear = credits._write(0);
+	method Action clear = credits._write(fromInteger(cfg.initCredits));
 endmodule
 
 //interface NCreditManager#(type ctrT);
